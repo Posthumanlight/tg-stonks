@@ -1,0 +1,13 @@
+[item.apple]
+item_id = "R000001"
+item_name = "Apples"
+units = "тон"
+item_type = FOOD
+tags = ["food", "raw", "farm"]
+
+[item.orange]
+item_id = "R000002"
+item_name = "Oranges"
+units = "тон"
+item_type = FOOD
+tags = ["food", "raw", "farm"]
