@@ -23,7 +23,9 @@ Server (from the repo root — `pyproject.toml` and `alembic.ini` live there, co
 - `poetry run pytest` (single: `poetry run pytest server/tests/path::test_name`)
 - `poetry run black server`
 - `poetry run alembic revision --autogenerate -m "msg"` · `poetry run alembic upgrade head`
-- Config: `DATABASE_URL` in repo-root `.env` (see `.env.example`); Supabase via Session pooler.
+- `poetry run python server/app/cli/init_world.py` — create/check the world row (idempotent)
+- Config in repo-root `.env`: `DATABASE_URL` (Supabase via Session pooler), `WORLD_SEED`
+  (never change it once the world exists).
 
 Client (from `client/`):
 - `npm i` · `npm run dev` · `npm run build` · `npm test` · `npm run typecheck`
@@ -89,7 +91,7 @@ docs/         design docs
 - Client renders and interpolates server state; it may predict movement visually but never
   decides outcomes. Menus/complex panels may be DOM overlays; maps and combat are Phaser scenes.
 - All player-facing text via i18n keys (`t('market.buy')`); content TOML uses name keys, not
-  literal names. Add every key to both `en.json` and `ru.json`.
+  literal names. Add every key to both `en.json` and `ua.json`.
 
 ## Conventions
 - Code, identifiers and comments in English, generate content only for english.

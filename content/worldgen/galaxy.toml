@@ -1,0 +1,28 @@
+# Galaxy generator parameters. See docs/world-gen.md "Galaxy generation".
+# Changing values changes generated output (see "Content and versions" in the doc).
+
+star_count = 100
+semi_axis_a = 1000            # gu, horizontal
+semi_axis_b = 600             # gu, vertical
+edge_margin = 0.85            # cluster centres stay inside the ellipse scaled by this factor
+
+cluster_count = [6, 8]        # inclusive range, rolled
+min_stars_per_cluster = 8
+cluster_size_weights = [1, 1, 2, 2, 3]   # each cluster rolls one of these as its size weight
+radius_per_sqrt_star = 26     # gu; cluster radius = this x sqrt(star count) x jitter
+radius_jitter = [0.85, 1.15]
+void_gap = 100                # gu, minimum empty space between cluster discs
+centre_bias = 0.6             # 0 = uniform disc, 1 = strongly centre-heavy
+min_star_separation = 25      # gu
+max_placement_attempts = 500  # per cluster centre / per star
+max_generation_attempts = 10  # generate-and-validate retries
+
+[links]
+k_nearest = 3
+p_extra = 0.35                # chance to add each candidate non-MST lane
+max_degree = 5
+max_lane_length = 2.0         # x the cluster's radius
+extra_bridge_ratio = 0.3      # extra cluster pairs = round(cluster_count x ratio)
+bridge_candidates = 3         # choose a bridge among the N closest star pairs
+max_bridges_per_cluster = 3
+bridge_clearance = 1.0        # bridges keep >= this x radius away from other clusters' centres

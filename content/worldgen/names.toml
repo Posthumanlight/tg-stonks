@@ -1,0 +1,36 @@
+# Name pools. Proper nouns: literal strings, not i18n keys, not translated.
+# The generator sorts each pool, then shuffles it deterministically, so the order here
+# does not matter. Must contain >= star_count star names and >= max cluster_count
+# cluster names, with no duplicates.
+
+star_names = [
+  "Abrexis", "Achevar", "Adrastel", "Aeloria", "Agathrin", "Akkaros", "Alcyra",
+  "Alvessa", "Amarion", "Andevar", "Antharis", "Arkenon", "Arvelis", "Ashkara",
+  "Auralis", "Avalith", "Azhurek", "Belcaros", "Berevin", "Brenneth", "Brixan",
+  "Caldrith", "Calyxa", "Carrowen", "Cassaril", "Cendrin", "Corrineth", "Corvane",
+  "Cyrrhen", "Dalvarra", "Demeris", "Draskel", "Drovak", "Dunmarra", "Ebrion",
+  "Edevane", "Elestra", "Elthorne", "Elvarin", "Emberra", "Enthyx", "Eskaron",
+  "Ethevar", "Faelorn", "Faravel", "Fenrith", "Feyrin", "Galdris", "Garvessa",
+  "Gethrin", "Gwenthar", "Halcyne", "Harrowen", "Helvara", "Hesperan", "Holmgard",
+  "Ilvenor", "Imbrisa", "Irkuun", "Iskarel", "Ithevan", "Jarovel", "Jessarae",
+  "Jorrik", "Kaelith", "Kalindra", "Karnoth", "Kessek", "Kethryn", "Khorash",
+  "Korriant", "Kyrandel", "Lathrin", "Lessarin", "Lorrith", "Lumaine", "Luthevar",
+  "Lyssiar", "Maelcor", "Marrowen", "Meridel", "Mirrabel", "Morvessa", "Myrradon",
+  "Nalthis", "Nemeris", "Nerevan", "Nethris", "Nostrevan", "Novarin", "Nyxara",
+  "Obrevan", "Olvessa", "Orrinax", "Orrumel", "Osthara", "Ostrevel", "Ovalis",
+  "Palendra", "Pellastra", "Pellicar", "Pherosa", "Pyrrhen", "Quarvel", "Quessira",
+  "Quillon", "Ravelor", "Renthys", "Rhessik", "Rhovane", "Risenne", "Rydaris",
+  "Saldrin", "Sarvessa", "Selvane", "Sephirel", "Sevrath", "Sireval", "Solvarra",
+  "Sorrinth", "Taloq", "Tanereth", "Tarvos", "Tervalis", "Thessarin", "Tirrenor",
+  "Torvane", "Tyrrasel", "Ulgarde", "Umbrael", "Uthmar", "Valdris", "Varkhal",
+  "Velquar", "Venthara", "Verrisel", "Vesk", "Vorlaxa", "Vyrandis", "Wennoth",
+  "Wymarch", "Xandrel", "Xenthar", "Xyloris", "Yaruun", "Yseldar", "Zaravel",
+  "Zephrine", "Zorakh", "Zyrenth",
+]
+
+cluster_names = [
+  "Amber Gate", "Ashen Reach", "Cinder Veil", "Drowned Lights", "Ember Shoal",
+  "Frost Chorus", "Gilded Maw", "Hollow Crown", "Iron Tide", "Obsidian Wake",
+  "Pale Lantern", "Saffron Drift", "Shattered Spiral", "Silent Choir", "Thornfield",
+  "Verdant Rift",
+]

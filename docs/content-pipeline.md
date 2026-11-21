@@ -8,7 +8,7 @@ defined, validated, localized and delivered to the client.
 - Loaded and validated by Pydantic models at server startup; invalid content fails fast.
 - Balance numbers live in content, not in code.
 - Player-facing names/descriptions are i18n keys (e.g. `item.iron_ore.name`), resolved
-  via `locales/en.json` and `locales/ru.json`. Every key must exist in both.
+  via `locales/en.json` and `locales/ua.json`. Every key must exist in both.
 - IDs are stable string slugs (e.g. `iron_ore`); never reuse or rename a shipped ID.
 
 ## Open questions

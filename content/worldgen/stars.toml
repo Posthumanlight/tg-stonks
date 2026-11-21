@@ -1,0 +1,65 @@
+# Main-sequence star classes. See docs/world-gen.md "Stars".
+# Weights are gameplay-tuned, not astronomical.
+# planet_count_weights: relative weights for 0, 1, 2, ... 8 planets.
+# resource_modifiers: added to planet resource rolls (categories the planet type has).
+
+[classes.O]
+weight = 1
+temperature_k = [30000, 45000]
+luminosity_lsun = [20000.0, 100000.0]
+radius_rsun = [6.6, 15.0]
+colour = "blue"
+planet_count_weights = [3, 3, 2, 2, 1, 1, 0, 0, 0]
+resource_modifiers = { exotic = 15, radioactives = 10 }
+
+[classes.B]
+weight = 2
+temperature_k = [10000, 30000]
+luminosity_lsun = [25.0, 20000.0]
+radius_rsun = [1.8, 6.6]
+colour = "blue_white"
+planet_count_weights = [2, 2, 2, 2, 2, 1, 1, 0, 0]
+resource_modifiers = { exotic = 10, radioactives = 5 }
+
+[classes.A]
+weight = 6
+temperature_k = [7500, 10000]
+luminosity_lsun = [5.0, 25.0]
+radius_rsun = [1.4, 1.8]
+colour = "white"
+planet_count_weights = [1, 1, 2, 2, 2, 2, 1, 1, 0]
+resource_modifiers = { rare_metals = 5 }
+
+[classes.F]
+weight = 14
+temperature_k = [6000, 7500]
+luminosity_lsun = [1.5, 5.0]
+radius_rsun = [1.15, 1.4]
+colour = "yellow_white"
+planet_count_weights = [1, 1, 1, 2, 2, 2, 2, 1, 1]
+
+[classes.G]
+weight = 22
+temperature_k = [5200, 6000]
+luminosity_lsun = [0.6, 1.5]
+radius_rsun = [0.9, 1.15]
+colour = "yellow"
+planet_count_weights = [1, 1, 1, 2, 2, 3, 2, 2, 1]
+resource_modifiers = { organics = 5 }
+
+[classes.K]
+weight = 30
+temperature_k = [3700, 5200]
+luminosity_lsun = [0.08, 0.6]
+radius_rsun = [0.7, 0.9]
+colour = "orange"
+planet_count_weights = [1, 1, 2, 2, 2, 2, 1, 1, 0]
+
+[classes.M]
+weight = 25
+temperature_k = [2400, 3700]
+luminosity_lsun = [0.001, 0.08]
+radius_rsun = [0.1, 0.7]
+colour = "red"
+planet_count_weights = [2, 2, 2, 2, 1, 1, 0, 0, 0]
+resource_modifiers = { rare_metals = -5, exotic = -5 }

@@ -1,0 +1,164 @@
+# Planet slots, size classes and planet types. See docs/world-gen.md "Planets".
+
+first_orbit_factor = [0.08, 0.7]   # first orbit = sqrt(L) x this, in AU
+orbit_ratio = [1.4, 2.2]           # each next orbit = previous x this
+classification_albedo = 0.3        # used for the equilibrium temperature
+
+# Ordered hottest first; a planet gets the first bucket with temperature >= min_k.
+# The last bucket must have min_k = 0.
+[[temperature_buckets]]
+id = "scorched"
+min_k = 600
+
+[[temperature_buckets]]
+id = "hot"
+min_k = 350
+
+[[temperature_buckets]]
+id = "temperate"
+min_k = 240
+
+[[temperature_buckets]]
+id = "cold"
+min_k = 120
+
+[[temperature_buckets]]
+id = "frozen"
+min_k = 0
+
+# weight_inner / weight_outer: weights inside / beyond the star's frost line.
+# surface_n: cube-sphere face resolution (N x N regions per face); omitted = no surface.
+[size_classes.tiny]
+radius_km = [1000, 2500]
+weight_inner = 20
+weight_outer = 10
+surface_n = 1
+
+[size_classes.small]
+radius_km = [2500, 4500]
+weight_inner = 30
+weight_outer = 15
+surface_n = 2
+
+[size_classes.medium]
+radius_km = [4500, 7500]
+weight_inner = 30
+weight_outer = 15
+surface_n = 3
+
+[size_classes.large]
+radius_km = [7500, 12000]
+weight_inner = 15
+weight_outer = 15
+surface_n = 4
+
+[size_classes.giant]
+radius_km = [20000, 70000]
+weight_inner = 5
+weight_outer = 45
+
+# Planet types. Temperature range is [min_k, max_k) in kelvin; omitted bound = unbounded.
+# For every size class, the types allowing it must together cover all temperatures
+# (checked at startup). resources: abundance range 0..100 per category.
+
+[types.lava]
+min_k = 600
+sizes = ["tiny", "small", "medium", "large"]
+weight = 10
+atmosphere = "thin"
+landable = true
+density_factor = 1.1
+name_key = "planet_type.lava.name"
+sprite = "planet_lava"
+resources = { metals = [40, 80], rare_metals = [10, 40], crystals = [10, 30], radioactives = [20, 50] }
+
+[types.toxic]
+min_k = 350
+max_k = 800
+sizes = ["medium", "large"]
+weight = 6
+atmosphere = "dense"
+landable = true
+density_factor = 0.95
+name_key = "planet_type.toxic.name"
+sprite = "planet_toxic"
+resources = { metals = [20, 50], crystals = [20, 50], gas = [20, 60], exotic = [0, 10] }
+
+[types.desert]
+min_k = 300
+max_k = 600
+sizes = ["small", "medium", "large"]
+weight = 8
+atmosphere = "thin"
+landable = true
+density_factor = 0.9
+name_key = "planet_type.desert.name"
+sprite = "planet_desert"
+resources = { metals = [30, 60], rare_metals = [5, 25], crystals = [30, 70] }
+
+[types.terran]
+min_k = 240
+max_k = 330
+sizes = ["small", "medium", "large"]
+weight = 4
+atmosphere = "breathable"
+landable = true
+density_factor = 1.0
+name_key = "planet_type.terran.name"
+sprite = "planet_terran"
+resources = { metals = [20, 50], crystals = [10, 30], volatiles = [30, 60], organics = [40, 90] }
+
+[types.ocean]
+min_k = 260
+max_k = 350
+sizes = ["medium", "large"]
+weight = 4
+atmosphere = "breathable"
+landable = true
+density_factor = 0.9
+name_key = "planet_type.ocean.name"
+sprite = "planet_ocean"
+resources = { metals = [5, 25], volatiles = [60, 100], organics = [30, 80] }
+
+[types.barren]
+sizes = ["tiny", "small", "medium", "large"]
+weight = 6
+size_weights = { large = 2 }
+atmosphere = "none"
+landable = true
+density_factor = 0.8
+name_key = "planet_type.barren.name"
+sprite = "planet_barren"
+resources = { metals = [30, 70], rare_metals = [10, 30], radioactives = [5, 25] }
+
+[types.ice]
+max_k = 250
+sizes = ["tiny", "small", "medium", "large"]
+weight = 10
+atmosphere = "thin"
+landable = true
+density_factor = 0.6
+name_key = "planet_type.ice.name"
+sprite = "planet_ice"
+resources = { metals = [10, 30], crystals = [10, 40], volatiles = [50, 90], exotic = [0, 10] }
+
+[types.gas_giant]
+sizes = ["giant"]
+weight = 10
+atmosphere = "dense"
+landable = false
+density_factor = 0.25
+name_key = "planet_type.gas_giant.name"
+sprite = "planet_gas_giant"
+resources = { volatiles = [10, 40], gas = [60, 100], exotic = [0, 15] }
+
+[types.ice_giant]
+max_k = 150
+sizes = ["giant"]
+weight = 8
+atmosphere = "dense"
+landable = false
+density_factor = 0.3
+name_key = "planet_type.ice_giant.name"
+sprite = "planet_ice_giant"
+resources = { volatiles = [40, 80], gas = [40, 80], exotic = [0, 10] }

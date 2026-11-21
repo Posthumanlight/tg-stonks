@@ -1,0 +1,34 @@
+# Resource categories for planet abundance profiles. See docs/world-gen.md "Resources".
+# Order matters: categories are rolled in this order. Append new categories at the end.
+
+[[categories]]
+id = "metals"
+name_key = "resource_category.metals.name"
+
+[[categories]]
+id = "rare_metals"
+name_key = "resource_category.rare_metals.name"
+
+[[categories]]
+id = "crystals"
+name_key = "resource_category.crystals.name"
+
+[[categories]]
+id = "volatiles"
+name_key = "resource_category.volatiles.name"
+
+[[categories]]
+id = "gas"
+name_key = "resource_category.gas.name"
+
+[[categories]]
+id = "organics"
+name_key = "resource_category.organics.name"
+
+[[categories]]
+id = "radioactives"
+name_key = "resource_category.radioactives.name"
+
+[[categories]]
+id = "exotic"
+name_key = "resource_category.exotic.name"

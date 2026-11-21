@@ -15,7 +15,8 @@ Tables: `content/worldgen/*.toml` (CLAUDE.md rule 9).
 ### Principles
 - Everything generated is a pure function of `(world_seed, object_path, generator_version)`.
   Only player-caused changes (**deltas**) are persisted, never generated data.
-- **One persistent galaxy**: the live server has a single world with a single `world_seed`.
+- **One persistent galaxy**: the live server has a single world with a single `world_seed`,
+  configured as the `WORLD_SEED` env var (see [World seed](#world-seed)).
 - Generators run **server-side only**. The client never re-implements them; it receives
   serialized generator output (see [Delivery to the client](#delivery-to-the-client)).
 - Code does structure and placement; all tunable numbers and weighted tables live in
@@ -46,7 +47,7 @@ These apply to every generator, at every version.
    ```
    Never use Python's `hash()`: it is salted per process.
 2. **One RNG stream per aspect.** Each generator uses separately named streams
-   (e.g. `cluster_centres`, `star_positions`, `links`, `names`, `planets`). Changing how one
+   (e.g. `cluster_centres`, `star_positions`, `links`, `names`, `slots`). Changing how one
    aspect consumes randomness then doesn't reshuffle the others. The generator version is
    *not* mixed into the seed: a version bump changes logic, not the dice.
 3. **Restricted math.** Generator math uses only `+ - * /`, comparisons, `math.sqrt`
@@ -117,12 +118,13 @@ edge_margin = 0.85            # cluster centres stay inside the ellipse scaled b
 cluster_count = [6, 8]        # inclusive range, rolled
 min_stars_per_cluster = 8
 cluster_size_weights = [1, 1, 2, 2, 3]   # relative size weights, rolled per cluster
-radius_per_sqrt_star = 22     # gu; cluster radius = this × sqrt(star count) × jitter
+radius_per_sqrt_star = 26     # gu; cluster radius = this × sqrt(star count) × jitter
 radius_jitter = [0.85, 1.15]
 void_gap = 100                # gu, minimum empty space between cluster discs
 centre_bias = 0.6             # 0 = uniform disc, 1 = strongly centre-heavy
 min_star_separation = 25      # gu
 max_placement_attempts = 500  # per cluster centre / per star
+max_generation_attempts = 10  # generate-and-validate retries
 
 [links]
 k_nearest = 3
@@ -132,7 +134,10 @@ max_lane_length = 2.0         # × the cluster's radius
 extra_bridge_ratio = 0.3      # extra cluster pairs = round(cluster_count × ratio)
 bridge_candidates = 3         # choose a bridge among the N closest star pairs
 max_bridges_per_cluster = 3
+bridge_clearance = 1.0        # bridges keep >= this × radius away from other clusters' centres
 ```
+With these defaults, 183 of 200 test seeds succeed on the first attempt and all within 3.
+Generation takes about 40 ms.
 
 ### Step 1 — cluster sizes and radii (stream `cluster_sizes`)
 1. Roll `cluster_count`, then a size weight per cluster from `cluster_size_weights`.
@@ -142,7 +147,7 @@ max_bridges_per_cluster = 3
    max(cluster_count) × min_stars_per_cluster`.
 3. Radius `r_i = round(radius_per_sqrt_star × sqrt(n_i) × uniform(radius_jitter))`. The
    radius grows with the star count, so a cluster's area always leaves room for its stars
-   at `min_star_separation` (≈ 55 gu for 8 stars, ≈ 110 gu for 25).
+   at `min_star_separation` (≈ 74 gu for 8 stars, ≈ 130 gu for 25).
 
 ### Step 2 — cluster centres (stream `cluster_centres`)
 1. Place centres one by one, largest cluster first, by rejection sampling: draw `(x, y)`
@@ -187,9 +192,11 @@ Order of construction:
 2. **Spanning bridges.** Build a complete graph over clusters. The weight of a cluster
    pair is the distance between its closest pair of stars. Take its MST. For each MST
    pair, in increasing weight order, list the `bridge_candidates` closest star pairs
-   between the two clusters. Pick one with `rng` among those that don't cross an existing
-   link and don't exceed `max_degree`. If none qualify, try the next closest pairs; if
-   still none, fail → retry.
+   between the two clusters. Pick one with `rng` among those that qualify: no crossing
+   with an existing link, no star exceeding `max_degree`, and **clearance**: the bridge
+   passes at least `bridge_clearance × r_k` from the centre of every third cluster *k*,
+   so it runs through the void rather than through another cluster. If none qualify, try
+   the next closest pairs. If still none, fail → retry.
 3. **Extra bridges.** `round(cluster_count × extra_bridge_ratio)` additional cluster pairs,
    chosen from the non-MST pairs weighted toward shorter pairs (weight `1 / rank`). Each
    is added like step 2 but skipped (not failed) if it would cross, break `max_degree`,
@@ -215,9 +222,17 @@ Order of construction:
 
 ## Star systems
 
-Generator `system`, root object `s/<s>`. Input: `world_seed`, star index, and the star's
-galaxy record (needed only for the name). Output: the star record + its planets. Streams:
-`star`, `planets`, `planet/<p>`.
+A system is produced by two generators, versioned and pinned separately (see
+[Versioning](#versioning-and-deltas-per-object-pinning)):
+
+| Generator | Root object | Input | Output | Streams |
+|---|---|---|---|---|
+| `system` (skeleton) | `s/<s>` | `world_seed`, star index | star properties + planet slots (orbit, static position) | `star`, `slots` |
+| `planet` | `s/<s>/p/<p>` | `world_seed`, the system skeleton, planet index | physical properties, type, resources | `planet`, `resources` |
+
+The skeleton is the planet's **structural context**: a planet's temperature depends on the
+star's luminosity and its own orbit. Names are not part of either output; they're resolved
+at read time (see [Names](#names)).
 
 ### Stars — `content/worldgen/stars.toml`
 Main sequence only (O B A F G K M). Weights are gameplay-tuned, not astronomical
@@ -248,15 +263,18 @@ Derived values (computed when needed, not stored):
 - Habitable zone: inner `sqrt(L / 1.1)` AU, outer `sqrt(L / 0.53)` AU.
 - Frost line: `4.85 × sqrt(L)` AU.
 
-### Planet slots and orbits (stream `planets`)
+### Planet slots and orbits (generator `system`, stream `slots`)
 1. Planet count from the class's 0…8 weights. Systems with 0 planets are valid (waypoints).
-2. First orbit: `d₁ = sqrt(L) × uniform(first_orbit_factor)`, default `[0.15, 0.8]` AU.
+2. First orbit: `d₁ = sqrt(L) × uniform(first_orbit_factor)`, default `[0.08, 0.7]` AU.
+   With `L` taken from the quantized `luminosity_mlsun`, the first planet lands
+   between ≈ 300 K and ≈ 900 K.
    Since equilibrium temperature scales with `L^¼ / sqrt(d)`, scaling orbits by `sqrt(L)`
    gives every star class a comparable spread of planet temperatures. The star class
    instead shows in planet count, colour, and resource modifiers.
 3. Each next orbit: `dₙ = dₙ₋₁ × uniform(orbit_ratio)`, default `[1.4, 2.2]`
    (a Titius–Bode-like spacing).
-4. Orbits are stored as integer milli-AU.
+4. Orbits are stored as integer milli-AU. Each orbit is computed from the previous
+   *rounded* orbit and is forced to be at least 1 mAU further out.
 5. **Static position** on the orbit ring: draw a unit-disc point by rejection with
    `0.01 ≤ u² + v² ≤ 1`, normalize by `sqrt(u² + v²)`, and multiply by the orbit radius.
    Round to integer milli-AU. No trigonometry. Positions never change over time.
@@ -264,10 +282,10 @@ Derived values (computed when needed, not stored):
 Parameters live in `content/worldgen/planets.toml` (`first_orbit_factor`,
 `orbit_ratio`, size classes, temperature buckets, planet types).
 
-### Planet physical properties (stream `planet/<p>`)
-1. **Equilibrium temperature** (fixed classification albedo 0.3):
-   `T = 278 × 0.915 × L^¼ / sqrt(d_AU)`, with `0.915 ≈ (1 − 0.3)^¼` as a constant.
-   Stored as integer kelvin.
+### Planet physical properties (generator `planet`, stream `planet`)
+1. **Equilibrium temperature** (classification albedo from content, default 0.3):
+   `T = 278 × (1 − albedo)^¼ × L^¼ / sqrt(d_AU)`, with every `^¼` computed as
+   `sqrt(sqrt(x))` (`(1 − 0.3)^¼ ≈ 0.915`). Stored as integer kelvin.
 2. **Temperature bucket** (content): scorched ≥ 600 K, hot 350–599, temperate 240–349,
    cold 120–239, frozen < 120.
 3. **Size class** by weighted choice; weights depend on whether `d` is inside or beyond
@@ -298,17 +316,25 @@ Example starting table (all values tunable):
 | desert | 300–600 | small–large | 8 | thin | yes | 0.9 |
 | terran | 240–330 | small–large | 4 | breathable | yes | 1.0 |
 | ocean | 260–350 | medium–large | 4 | breathable | yes | 0.9 |
-| barren | any | tiny–large | 10 (large: 3) | none | yes | 0.8 |
+| barren | any | tiny–large | 6 (large: 2) | none | yes | 0.8 |
 | ice | < 250 | tiny–large | 10 | thin | yes | 0.6 |
 | gas_giant | any | giant | 10 | dense | **no** | 0.25 |
 | ice_giant | < 150 | giant | 8 | dense | **no** | 0.3 |
 
-Each type also has an i18n name key (`planet_type.lava.name`), a sprite key, a
-`resource_profile`, and (later) a biome set for surface-gen.
+Temperature ranges are half-open `[min_k, max_k)`; an omitted bound is unbounded. Each type
+also has an i18n name key (`planet_type.lava.name`), a sprite key, a `resources` profile,
+optional per-size weight overrides (`size_weights`), and (later) a biome set for
+surface-gen.
 
-**Coverage validation (startup):** for every (temperature bucket × size class)
-combination, at least one type must qualify. Otherwise content loading fails. This
-guarantees step 4 never has an empty candidate list.
+Resulting mix over 3 000 generated systems: barren 37%, ice 25%, desert 15%, gas giant 7%,
+terran 5%, toxic 4%, lava 3%, ocean 2%, ice giant 2%. Barren dominates because it's the
+only type for small rocks in several temperature ranges; tune in `planets.toml`.
+
+**Coverage validation (startup):** for every size class, the temperature ranges of the
+types allowing it (with weight > 0) must together cover all of `[0, ∞)`. Otherwise content
+loading fails. This guarantees step 4 never has an empty candidate list. Startup
+validation also checks that landable types only use size classes with a `surface_n`, and
+that every resource category referenced exists.
 
 ### Resources — `content/worldgen/resources.toml`
 Planets get **abundance profiles** per resource **category**, not concrete items. Economy
@@ -316,35 +342,41 @@ maps item IDs to categories later (see [economy](economy.md)).
 
 - Categories: `metals`, `rare_metals`, `crystals`, `volatiles`, `gas`, `organics`,
   `radioactives`, `exotic`.
-- Each planet type's `resource_profile` gives an abundance range `[min, max]` (0–100) per
+- Each planet type's `resources` table gives an abundance range `[min, max]` (0–100) per
   category. Missing categories mean 0. Example: `lava = { metals = [40, 80],
   rare_metals = [10, 40], radioactives = [20, 50] }`.
-- Optional star-class modifiers (additive, clamped to 0–100), e.g. O/B stars `+10
-  exotic`, `+10 radioactives`; M stars `−5 rare_metals`.
-- Each category rolls uniformly in its range (stream `planet/<p>/resources`, categories in
-  fixed listed order), and the result is stored as an int 0–100.
+- Optional star-class `resource_modifiers` (additive, clamped to 0–100), e.g. O stars
+  `+15 exotic`, `+10 radioactives`; M stars `−5 rare_metals`. Modifiers apply only to
+  categories the planet type has; a missing category stays 0.
+- Each category rolls uniformly in its range (generator `planet`, stream `resources`,
+  categories in `resources.toml` order), and the result is stored as an int 0–100. Append
+  new categories at the end of that file.
 - Gas and ice giants: `gas` / `volatiles` are harvestable from orbit. Rocky planets'
   abundances drive concrete deposit placement in surface-gen (later).
 
 ### Planet output record
 | Field | Type | Notes |
 |---|---|---|
+| `version` | int | `planet` generator version that produced it |
 | `path` | str | `s/<s>/p/<p>` |
+| `code` | str | `S017-P2` |
 | `index` | int | 1-based orbit order |
-| `orbit_mau` | int | milli-AU |
-| `pos_mau` | (int, int) | static position in the system plane |
+| `orbit_mau` | int | milli-AU (from the skeleton slot) |
+| `x_mau`, `y_mau` | int | static position in the system plane (from the slot) |
 | `temperature_k` | int | equilibrium temperature |
 | `temp_bucket` | str | content key |
 | `size_class` | str | content key |
 | `radius_km` | int | |
 | `gravity_mg` | int | milli-g |
-| `type` | str | content key |
+| `planet_type` | str | content key |
 | `atmosphere` | str | from type |
 | `landable` | bool | from type; giants never |
 | `surface_n` | int \| null | cube-sphere face resolution; null if not landable |
 | `in_habitable_zone` | bool | |
 | `resources` | dict[str, int] | category → abundance 0–100 |
-| `name` | str | resolved at read time (see Names) |
+
+
+The display name is not part of the record; it is resolved at read time (see Names).
 
 ---
 
@@ -362,9 +394,11 @@ maps item IDs to categories later (see [economy](economy.md)).
   formatted at read time, not stored.
 - **Custom planet names (delta):** table `body_names(object_path PK, custom_name,
   updated_at)`. If a row exists, it overrides the default name. A custom name is a delta,
-  so it pins the planet's system (see below). There is currently **no API** to set it;
-  rows are written directly in the DB. A rename feature (who may rename, validation,
-  moderation) comes later.
+  so it pins the planet (and, as structural context, its system skeleton; see below).
+  There is currently **no API** to set it. Rows are written directly in the DB, or with
+  `worldgen_repo.set_body_name()` from a script. Rows written by hand get their pins from
+  `reconcile_body_name_pins()`, which is meant to run at server startup. A rename feature
+  (who may rename, validation, moderation) comes later.
 
 ---
 
@@ -373,47 +407,77 @@ maps item IDs to categories later (see [economy](economy.md)).
 Each generator has an integer version and a registry of implementations:
 
 ```python
+# server/app/world/versions.py
 GENERATORS = {
     "galaxy": {1: galaxy_v1.generate},
-    "system": {1: system_v1.generate},
+    "system": {1: system_v1.generate},   # skeleton: star + planet slots
+    "planet": {1: planet_v1.generate},
     # "surface": {...}  later
 }
-LATEST = {"galaxy": 1, "system": 1}
+LATEST = {name: max(vs) for name, vs in GENERATORS.items()}
+DEPENDENCIES = {"galaxy": (), "system": (), "planet": ("system",)}
 ```
 
-Old versions stay in code (`server/app/world/<generator>/v<N>.py`) as long as anything
-uses them.
+Old versions stay in code (`server/app/world/<generator>/v<N>.py`) as long as any pin
+references them.
 
 ### Rules
-- **Generator root objects:** `galaxy` → `galaxy`; `system` → `s/<s>`; `surface` (later) →
-  `s/<s>/p/<p>`.
+- **Generator root objects:** `galaxy` → `galaxy`; `system` → `s/<s>`; `planet` →
+  `s/<s>/p/<p>`; later `surface` → `s/<s>/p/<p>`, moons, belts and stations → their own
+  paths.
 - **Galaxy is always pinned.** The world row stores its galaxy version
   (`worlds(world_id, seed, galaxy_version, created_at)`), and the live galaxy never
   silently regenerates. Galaxy changes for the live world must be **additive** (e.g. a
   future expansion generator that adds clusters without moving existing stars), or happen
   in a new world.
-- **Other generators pin per object.** Table `worldgen_pins(object_path, generator,
-  version, pinned_at)`, primary key `(object_path, generator)`.
+- **A delta locks only the entity it touches**, plus that entity's **structural
+  context**. Table `worldgen_pins(object_path, generator, version, pinned_at)`, primary key
+  `(object_path, generator)`.
   - An object with no pin is generated with `LATEST[generator]`.
-  - When the **first delta** touching an object is written, a pin to the current latest
-    version is inserted **in the same transaction** for every generator root on its
-    ancestor path. Example: a custom name on `s/17/p/2` pins `system` for `s/17`. A future
-    building in a region of `s/17/p/2` pins `surface` for `s/17/p/2` *and* `system` for
-    `s/17`.
+  - When the **first delta** touching an entity is written, pins to the current latest
+    versions are inserted **in the same transaction** for the entity's own generator *and*
+    each generator in its `DEPENDENCIES`, on the matching ancestor object
+    (`versions.pins_for_delta`, `worldgen_repo.pin_for_delta`).
+  - Example: a custom name on planet `s/17/p/2` pins `("s/17/p/2", "planet")` and
+    `("s/17", "system")`. The skeleton is pinned because the planet's inputs (star
+    luminosity, its orbit) come from it, so a newer skeleton version can't shift them.
+    **Sibling planets stay unpinned** and pick up newer `planet` versions; they share the
+    frozen skeleton but not the planet logic.
+  - A later moon/station/surface generator declares its dependencies the same way. For
+    example, `surface` would depend on `planet` and `system`.
   - Pinned objects keep their version even after newer versions ship. Untouched objects
     pick up improvements automatically.
 - **Startup check:** every `(generator, version)` that appears in `worldgen_pins`
-  must exist in `GENERATORS`; otherwise the server refuses to start.
-- **Golden-hash tests:** for each `(generator, version)`, a test generates fixed seeds,
-  serializes the output canonically (sorted-key JSON), and compares its SHA-256 with a
-  stored hash. Changing a generator's output without bumping its version fails CI.
+  must exist in `GENERATORS` (`worldgen_repo.verify_pins`); otherwise the server refuses
+  to start.
+- **Golden-hash tests** (`server/tests/world/test_golden.py`): for each
+  `(generator, version)`, fixed seeds are generated, serialized canonically (sorted-key
+  JSON) and compared by SHA-256 with a stored hash. Changing a generator's output without
+  bumping its version fails CI.
 - Every version bump adds an entry to the [log](#generator-version-log): what changed and
   whether old versions can be retired.
 
+### Content and versions
+World-gen content (`content/worldgen/*.toml`) is an input to every generator, so tuning
+it changes output exactly like a code change, golden hashes included. **Until launch**,
+tune freely and update the golden hashes. **After launch** this needs a rule (open
+question): either freeze worldgen content per generator version (a tuning change becomes
+a version bump that ships its own copy of the tables), or accept that tuning also changes
+pinned objects.
+
+### World seed
+- `WORLD_SEED` env var (integer `0 … 2^63 − 1`, so it fits a signed BIGINT), read via
+  `Settings.require_world_seed()`.
+- On first start, `worldgen_repo.ensure_world()` creates the `worlds` row with the seed and
+  the latest galaxy version. On later starts it **refuses to start** if `WORLD_SEED`
+  differs from the stored seed, which protects against silently generating a different
+  galaxy under existing deltas.
+
 ### Caching
-Generation is cheap but not free. The server keeps an in-memory LRU of generated system
-records keyed by `(path, version)`. The galaxy is generated once at startup and held for
-the process lifetime.
+Generation is cheap but not free. `WorldGenerator` (`server/app/world/generator.py`)
+keeps an in-memory LRU of system skeletons and planets keyed by index and version. The
+galaxy is generated once and held for the process lifetime. Version resolution needs pins
+from the DB, so callers pass versions in; `None` means unpinned (latest).
 
 ---
 
@@ -456,21 +520,29 @@ its parent so adding it later doesn't disturb existing output. Decisions are ope
 ## Module layout
 
 ```
-server/app/world/
-  seeds.py        derive_seed, rng(world_seed, path, stream)
+server/app/world/              pure: no DB, network, clock, files or global RNG
+  seeds.py        derive_seed, make_rng(world_seed, path, stream, attempt)
   geometry.py     integer geometry: distance², segment crossing, ellipse containment
-  galaxy/v1.py    clusters, star placement, ordering, names → GalaxyV1
+  paths.py        object paths and catalog codes, path parsing
   links.py        MST (Prim), bridges, extra lanes (used by galaxy/v1)
-  system/v1.py    star + planets → SystemV1
+  galaxy/v1.py    clusters, star placement, ordering, names, links → Galaxy; validate()
+  system/v1.py    star + planet slots → SystemSkeleton
+  planet/v1.py    one planet's properties, type, resources → Planet
   naming.py       name-pool assignment, Roman numerals, display-name resolution
-  versions.py     GENERATORS / LATEST registry
-  types.py        frozen dataclasses for outputs (Cluster, Star, Link, Planet, …)
+  versions.py     GENERATORS / LATEST / DEPENDENCIES, pins_for_delta
+  generator.py    WorldGenerator facade with caching
+  canonical.py    canonical JSON + hash (golden tests, ETags)
+  types.py        frozen dataclasses for outputs
+server/app/content/worldgen.py Pydantic schemas + loader for content/worldgen/*.toml
+server/app/persistence/
+  models/world.py     worlds, worldgen_pins, body_names
+  worldgen_repo.py    ensure_world, pin_for_delta, verify_pins, set_body_name, …
 content/worldgen/
   galaxy.toml  stars.toml  planets.toml  resources.toml  names.toml
 ```
 Pydantic schemas validate the five TOML files at startup, including the cross-file checks
-above (pool sizes, planet-type coverage, resource categories exist). Tests mirror this
-layout under `server/tests/world/`.
+above (pool sizes, planet-type coverage, resource categories exist). Tests live in
+`server/tests/world/` and `server/tests/persistence/test_worldgen_repo.py`.
 
 ---
 
@@ -480,7 +552,16 @@ layout under `server/tests/world/`.
 - Travel-time model along lanes vs bridges (sim; e.g. bridges slower or hazardous?).
 - Galaxy growth beyond 100 stars: design of the additive expansion generator.
 - Unpinning: may an object be unpinned once all its deltas are gone?
+- Content tuning after launch (see [Content and versions](#content-and-versions)).
+- Startup wiring: no server entry point exists yet. When `app.main` is added, its startup
+  must call `app.world_bootstrap.bootstrap_world()` (ensure_world → reconcile names →
+  verify pins → commit → generate the galaxy). Until then, run it by hand with
+  `poetry run python server/app/cli/init_world.py` (idempotent).
 - Surface details (see outline above).
 
 ## Generator version log
-_(none yet — `galaxy` v1 and `system` v1 will be the first entries when implemented)_
+| Generator | Version | Date | Change |
+|---|---|---|---|
+| galaxy | 1 | 2026-11-21 | Initial: ellipse, clusters with voids, MST + extra lanes, bridges with clearance |
+| system | 1 | 2026-11-21 | Initial: main-sequence star, 0–8 planet slots, Titius–Bode-like orbits, static positions |
+| planet | 1 | 2026-11-21 | Initial: equilibrium temperature, size class by frost line, weighted type, resource abundances |
