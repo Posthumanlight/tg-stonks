@@ -1,0 +1,163 @@
+:root {
+  --bg: #05070d;
+  --panel: rgb(10 15 28 / 0.92);
+  --border: #24324f;
+  --text: #e6ecf8;
+  --muted: #8fa3c7;
+  --accent: #ffd76a;
+  --radius: 12px;
+  --tap: 44px;
+  --gutter: 12px;
+  /* Telegram sets --tg-* insets (fullscreen mode); browsers use env(). */
+  --safe-top: max(
+    env(safe-area-inset-top, 0px),
+    calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px))
+  );
+  --safe-bottom: max(
+    env(safe-area-inset-bottom, 0px),
+    calc(
+      var(--tg-safe-area-inset-bottom, 0px) + var(--tg-content-safe-area-inset-bottom, 0px)
+    )
+  );
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  touch-action: none; /* the chart handles pan/pinch itself */
+}
+
+/* The overlay never blocks the canvas; only its panels take input. */
+#ui {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  padding: calc(var(--safe-top) + var(--gutter)) var(--gutter)
+    calc(var(--safe-bottom) + var(--gutter));
+}
+
+.panel {
+  pointer-events: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  backdrop-filter: blur(6px);
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h1 {
+  font-size: 16px;
+}
+
+h2 {
+  font-size: 20px;
+}
+
+button {
+  min-height: var(--tap);
+  min-width: var(--tap);
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #16213a;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:active {
+  background: #1f2d4d;
+}
+
+button.icon {
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.topbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+}
+
+.note {
+  margin: auto;
+  padding: 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.note.panel {
+  color: var(--text);
+}
+
+.hint {
+  margin: auto 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.8;
+}
+
+.sheet {
+  margin-top: auto;
+  padding: 14px 16px 16px;
+}
+
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+}
+
+.facts dt {
+  color: var(--muted);
+}
+
+.facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

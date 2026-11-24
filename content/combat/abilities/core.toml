@@ -1,0 +1,75 @@
+# Core weapon keywords: plain combinations of registered Python functions
+# (server/app/combat/ground/abilities/). See docs/combat-ground.md "Abilities".
+
+[abilities.anti]
+name_key = "ability.anti.name"
+description_key = "ability.anti.desc"
+kind = "weapon"
+params = { armor = "armor", percent = "integer" }
+
+[[abilities.anti.triggers]]
+event = "damage_calculating"
+conditions = [{ fn = "target_armor_is", armor = "$armor" }]
+actions = [{ fn = "multiply_damage", percent = "$percent" }]
+
+[abilities.assault]
+name_key = "ability.assault.name"
+description_key = "ability.assault.desc"
+kind = "weapon"
+
+[[abilities.assault.triggers]]
+event = "attack_resolved"
+actions = [{ fn = "keep_movement" }]
+
+[abilities.heavy]
+name_key = "ability.heavy.name"
+description_key = "ability.heavy.desc"
+kind = "weapon"
+
+[[abilities.heavy.triggers]]
+event = "attack_validating"
+conditions = [{ fn = "owner_has_moved" }]
+actions = [{ fn = "forbid_attack", reason_key = "attack.forbidden.heavy_moved" }]
+
+[abilities.blast]
+name_key = "ability.blast.name"
+description_key = "ability.blast.desc"
+kind = "weapon"
+params = { per_models = "integer" }
+
+[[abilities.blast.triggers]]
+event = "hits_calculating"
+actions = [{ fn = "add_hits_per_target_models", per_models = "$per_models" }]
+
+[abilities.ignores_cover]
+name_key = "ability.ignores_cover.name"
+description_key = "ability.ignores_cover.desc"
+kind = "weapon"
+
+[[abilities.ignores_cover.triggers]]
+event = "damage_calculating"
+actions = [{ fn = "set_cover", value = false }]
+
+[abilities.indirect]
+name_key = "ability.indirect.name"
+description_key = "ability.indirect.desc"
+kind = "weapon"
+
+[[abilities.indirect.triggers]]
+event = "attack_validating"
+actions = [{ fn = "allow_without_los" }]
+
+[[abilities.indirect.triggers]]
+event = "damage_calculating"
+conditions = [{ fn = "not", conditions = [{ fn = "owner_sees_target" }] }]
+actions = [{ fn = "set_cover", value = true }]
+
+[abilities.reach]
+name_key = "ability.reach.name"
+description_key = "ability.reach.desc"
+kind = "weapon"
+params = { squares = "integer" }
+
+[[abilities.reach.triggers]]
+event = "attack_validating"
+actions = [{ fn = "add_range", squares = "$squares" }]

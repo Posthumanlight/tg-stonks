@@ -1,0 +1,57 @@
+# Damage percentage for every (weapon type, armor type) pair. Must be complete.
+
+[damage_table.small_arms]
+light = 100
+heavy = 50
+vehicle = 25
+monster = 50
+character = 100
+
+[damage_table.heavy]
+light = 100
+heavy = 100
+vehicle = 75
+monster = 100
+character = 100
+
+[damage_table.anti_tank]
+light = 75
+heavy = 100
+vehicle = 150
+monster = 125
+character = 100
+
+[damage_table.flamer]
+light = 125
+heavy = 75
+vehicle = 25
+monster = 75
+character = 100
+
+[damage_table.explosive]
+light = 125
+heavy = 75
+vehicle = 75
+monster = 75
+character = 75
+
+[damage_table.artillery]
+light = 100
+heavy = 100
+vehicle = 100
+monster = 100
+character = 75
+
+[damage_table.blade]
+light = 100
+heavy = 100
+vehicle = 50
+monster = 100
+character = 100
+
+[damage_table.claws]
+light = 100
+heavy = 75
+vehicle = 50
+monster = 100
+character = 100

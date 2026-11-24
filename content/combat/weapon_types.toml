@@ -1,0 +1,25 @@
+# Weapon types index the damage table (damage_table.toml).
+
+[weapon_types.small_arms]
+name_key = "weapon_type.small_arms.name"
+
+[weapon_types.heavy]
+name_key = "weapon_type.heavy.name"
+
+[weapon_types.anti_tank]
+name_key = "weapon_type.anti_tank.name"
+
+[weapon_types.flamer]
+name_key = "weapon_type.flamer.name"
+
+[weapon_types.explosive]
+name_key = "weapon_type.explosive.name"
+
+[weapon_types.artillery]
+name_key = "weapon_type.artillery.name"
+
+[weapon_types.blade]
+name_key = "weapon_type.blade.name"
+
+[weapon_types.claws]
+name_key = "weapon_type.claws.name"

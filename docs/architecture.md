@@ -13,6 +13,14 @@ Target scale: 100–1000 concurrent players.
 - Interest management by sector (space) / planet (surface): clients receive only deltas
   for the area they are subscribed to.
 - Combats run as separate instanced, turn-based state machines.
+- **Entry point:** `server/app/main.py` (`create_app()`). Its lifespan:
+  - loads the content;
+  - runs `bootstrap_world`, which checks the world row and pins;
+  - builds the cached static world views;
+  - disposes the DB engine on shutdown.
+- **Same origin:** FastAPI serves the API under `/api` and the built client
+  (`client/dist`) at `/`. There is no CORS. In dev, Vite proxies `/api` and `/ws` to
+  uvicorn (see [client](client.md)).
 - Pure core (`sim/`, `world/`, `economy/`, `combat/`) has no I/O; shell layers
   (`api/`, `ws/`, `persistence/`) are thin.
 - DB: Supabase Postgres, via SQLAlchemy 2.0 async (asyncpg driver) + Alembic.

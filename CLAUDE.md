@@ -2,19 +2,20 @@
 
 Mobile-first browser MMO: 2D pixel-art space exploration. Procedurally generated galaxy,
 production-chain economy, ship travel + planet expeditions, turn-based ship combat and
-turn-based squad combat (alternating activations, 40k-style). Runs as a mobile web app
+turn-based squad combat (per-unit Speed initiative HOMM-style, multi-model 40k-style units,
+abilities as event-hooked Python functions). Runs as a mobile web app
 and as a Telegram Mini App.
 
 Design lives in `docs/` — read the relevant doc before touching a system:
 [architecture](docs/architecture.md) · [protocol](docs/protocol.md) ·
 [world-gen](docs/world-gen.md) · [economy](docs/economy.md) ·
 [combat-space](docs/combat-space.md) · [combat-ground](docs/combat-ground.md) ·
-[content-pipeline](docs/content-pipeline.md)
+[content-pipeline](docs/content-pipeline.md) · [client](docs/client.md)
 
 ## Stack
 - Server: Python 3.12, FastAPI, WebSockets, SQLAlchemy 2.0 (async) + Alembic, Pydantic v2
 - DB: Supabase Postgres (asyncpg driver); SQLite (aiosqlite) for tests.
-- Client: TypeScript (strict), Phaser 3, Vite
+- Client: TypeScript (strict), Phaser 4 (scenes), Preact + @preact/signals (DOM overlays), Vite
 - Tooling: Poetry, black, pytest · npm, vitest
 
 ## Commands
@@ -24,12 +25,17 @@ Server (from the repo root — `pyproject.toml` and `alembic.ini` live there, co
 - `poetry run black server`
 - `poetry run alembic revision --autogenerate -m "msg"` · `poetry run alembic upgrade head`
 - `poetry run python server/app/cli/init_world.py` — create/check the world row (idempotent)
+- `poetry run python server/app/cli/snapshot_world.py` — dump the whole generated galaxy
+  into debug `gen_*` tables for browsing (never read by the game; safe to drop)
 - Config in repo-root `.env`: `DATABASE_URL` (Supabase via Session pooler), `WORLD_SEED`
   (never change it once the world exists).
 
-Client (from `client/`):
+Client (from `client/`; run uvicorn alongside — Vite proxies `/api` and `/ws` to :8000):
 - `npm i` · `npm run dev` · `npm run build` · `npm test` · `npm run typecheck`
 - `npm run gen:protocol` — regenerate TS protocol types from server Pydantic schemas
+  (`-- --check` fails if the committed file is stale)
+- `npm run build` output (`client/dist`) is served by FastAPI at `/` (same origin).
+- On Windows run npm/vitest from PowerShell/cmd, not Git Bash `/d/...` paths (vitest breaks).
 
 ## Layout
 ```

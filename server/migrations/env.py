@@ -10,6 +10,7 @@ from alembic import context
 import app.persistence.models  # noqa: F401  (registers all tables on Base.metadata)
 from app.config import get_settings
 from app.persistence.db import Base, normalize_db_url
+from app.persistence.worldgen_snapshot import is_snapshot_table
 
 config = context.config
 
@@ -25,11 +26,20 @@ def _database_url() -> str:
     return normalize_db_url(get_settings().database_url)
 
 
+def _include_object(obj, name, type_, reflected, compare_to) -> bool:
+    """Keep the debug `gen_*` snapshot tables out of autogenerate (no drop proposals)."""
+    table = (
+        name if type_ == "table" else getattr(getattr(obj, "table", None), "name", None)
+    )
+    return not is_snapshot_table(table)
+
+
 def _configure_kwargs() -> dict:
     return {
         "target_metadata": target_metadata,
         "render_as_batch": True,
         "compare_type": True,
+        "include_object": _include_object,
     }
 
 

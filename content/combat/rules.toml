@@ -1,0 +1,14 @@
+# Global ground-combat rules. See docs/combat-ground.md.
+
+default_board = { width = 32, height = 32 }
+board_min = 8                         # smallest allowed side length
+board_max = 64                        # largest allowed side length
+round_limit = 12                      # after this round, the side with more surviving points wins
+draw_margin_percent = 10              # point totals within this % of the leader are a draw
+activation_timer_s = 45               # enforced by the server shell (auto-Skip), not the engine
+max_models_per_unit = 100             # hard cap on any unit's size
+base_reactions = 1                    # reactions per unit per round (opportunity attacks)
+opportunity_attack_hit_percent = 100  # hits of an opportunity attack, % of a normal attack
+friendly_units_screen = true          # do the shooter's own units screen its shots?
+first_round_no_attacks = false        # forbid attacks in round 1 (anti alpha-strike option)
+max_trigger_depth = 8                 # max nesting of hook triggers set off by other triggers

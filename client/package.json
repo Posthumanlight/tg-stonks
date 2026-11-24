@@ -1,0 +1,31 @@
+{
+  "name": "tg-stonks-client",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "gen:protocol": "node scripts/gen-protocol.mjs"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.11.4",
+    "phaser": "^4.2.1",
+    "preact": "^11.2.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^26.6.6",
+    "@types/telegram-web-app": "^10.1.0",
+    "json-schema-to-typescript": "^16.0.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  }
+}

@@ -1,0 +1,82 @@
+# Unit abilities and statuses. See docs/combat-ground.md "Unit ability examples".
+
+[abilities.regenerate]
+name_key = "ability.regenerate.name"
+description_key = "ability.regenerate.desc"
+kind = "passive"
+params = { amount = "integer" }
+
+[[abilities.regenerate.triggers]]
+event = "activation_started"
+conditions = [{ fn = "owner_is_damaged" }]
+actions = [{ fn = "heal_owner", amount = "$amount" }]
+
+[abilities.bodyguard]
+name_key = "ability.bodyguard.name"
+description_key = "ability.bodyguard.desc"
+kind = "passive"
+
+[[abilities.bodyguard.triggers]]
+event = "hit_allocating"
+scope = "any"
+conditions = [
+  { fn = "target_is_ally" },
+  { fn = "target_has_tag", tag = "character" },
+  { fn = "target_within", squares = 1 },
+]
+actions = [{ fn = "redirect_hit_to_owner" }]
+
+[abilities.rally_cry]
+name_key = "ability.rally_cry.name"
+description_key = "ability.rally_cry.desc"
+kind = "passive"
+
+[[abilities.rally_cry.triggers]]
+event = "stat_calculating"
+scope = "ally"
+conditions = [
+  { fn = "stat_is", stat = "movement" },
+  { fn = "unit_has_tag", tag = "infantry" },
+  { fn = "unit_within", squares = 3 },
+]
+actions = [{ fn = "add_stat", amount = 1 }]
+
+[abilities.disengage]
+name_key = "ability.disengage.name"
+description_key = "ability.disengage.desc"
+kind = "status"
+duration = 1
+
+[[abilities.disengage.triggers]]
+event = "opportunity_attack_triggering"
+scope = "self_target"
+actions = [{ fn = "cancel_opportunity_attack" }]
+
+[abilities.fall_back]
+name_key = "ability.fall_back.name"
+description_key = "ability.fall_back.desc"
+kind = "active"
+ap_cost = 1
+cooldown = 2
+targeting = { type = "self" }
+on_cast = [{ fn = "apply_status_to_owner", status = "disengage", rounds = 1 }]
+
+[abilities.smoke_charge]
+name_key = "ability.smoke_charge.name"
+description_key = "ability.smoke_charge.desc"
+kind = "active"
+ap_cost = 1
+cooldown = 3
+targeting = { type = "square", range = 8, los = true, radius = 1 }
+on_cast = [{ fn = "place_overlay_in_radius", overlay = "smoke", radius = 1, rounds = 2 }]
+
+[abilities.frag_charge]
+name_key = "ability.frag_charge.name"
+description_key = "ability.frag_charge.desc"
+kind = "active"
+ap_cost = 1
+uses = 1
+targeting = { type = "square", range = 6, los = true, radius = 1 }
+on_cast = [
+  { fn = "deal_hits_in_radius", radius = 1, hits_per_model = 1, dice = "D3", weapon_type = "explosive" },
+]

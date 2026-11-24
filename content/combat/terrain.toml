@@ -1,0 +1,46 @@
+# Terrain types and temporary overlays. See docs/combat-ground.md "Terrain".
+# cover: none | obstacle (directional, flankable) | area (standing in it)
+
+[terrain.open]
+name_key = "terrain.open.name"
+passable = true
+move_cost = 1
+blocks_los = false
+cover = "none"
+
+[terrain.rubble]
+name_key = "terrain.rubble.name"
+passable = true
+move_cost = 2
+blocks_los = false
+cover = "area"
+
+[terrain.forest]
+name_key = "terrain.forest.name"
+passable = true
+move_cost = 2
+blocks_los = false
+cover = "area"
+
+[terrain.low_wall]
+name_key = "terrain.low_wall.name"
+passable = false
+blocks_los = false
+cover = "obstacle"
+
+[terrain.wall]
+name_key = "terrain.wall.name"
+passable = false
+blocks_los = true
+cover = "none"
+
+[terrain.deep_water]
+name_key = "terrain.deep_water.name"
+passable = false
+blocks_los = false
+cover = "none"
+
+# Overlays override only the fields they set.
+[overlays.smoke]
+name_key = "overlay.smoke.name"
+blocks_los = true

@@ -1,0 +1,10 @@
+# Unit type tags that abilities can check (docs/combat-ground.md "Units").
+tags = [
+  "infantry",
+  "human",
+  "mechanical",
+  "beast",
+  "swarm",
+  "leader",
+  "character",
+]

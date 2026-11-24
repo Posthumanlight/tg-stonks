@@ -1,0 +1,158 @@
+# Unit types. Stats per docs/combat-ground.md "Units"; hp is per model.
+# groups = the loadout: models sharing a role, weapons and hp. Exactly one group has
+# fill = true and absorbs unit-size changes. casualty_priority: lowest dies first.
+
+# --- Concord (human) -----------------------------------------------------------------
+
+[units.line_troopers]
+name_key = "unit.line_troopers.name"
+points = 90
+speed = 5
+movement = 6
+hp = 1
+armor = "light"
+tags = ["infantry", "human"]
+action_points = 2
+footprint = 1
+models = { min = 5, max = 10 }
+abilities = ["smoke_charge", "fall_back"]
+
+[[units.line_troopers.groups]]
+role = "trooper"
+count = 8
+fill = true
+weapons = ["pulse_rifle", "combat_knife"]
+casualty_priority = 0
+
+[[units.line_troopers.groups]]
+role = "gunner"
+count = 1
+weapons = ["rail_lance", "combat_knife"]
+casualty_priority = 1
+
+[[units.line_troopers.groups]]
+role = "sergeant"
+count = 1
+hp = 2
+weapons = ["sidearm", "shock_maul"]
+casualty_priority = 2
+
+[units.heavy_team]
+name_key = "unit.heavy_team.name"
+points = 110
+speed = 3
+movement = 4
+hp = 3
+armor = "heavy"
+tags = ["infantry", "human"]
+action_points = 2
+footprint = 1
+models = { min = 3, max = 3 }
+abilities = ["bodyguard"]
+
+[[units.heavy_team.groups]]
+role = "gunner"
+count = 2
+fill = true
+weapons = ["autocannon", "combat_knife"]
+casualty_priority = 0
+
+[[units.heavy_team.groups]]
+role = "loader"
+count = 1
+weapons = ["pulse_rifle", "combat_knife"]
+casualty_priority = 1
+
+[units.warden]
+name_key = "unit.warden.name"
+points = 80
+speed = 6
+movement = 6
+hp = 6
+armor = "character"
+tags = ["infantry", "human", "leader", "character"]
+action_points = 2
+footprint = 1
+models = { min = 1, max = 1 }
+abilities = ["rally_cry", "frag_charge"]
+
+[[units.warden.groups]]
+role = "warden"
+count = 1
+fill = true
+weapons = ["sidearm", "shock_maul"]
+
+[units.bastion_walker]
+name_key = "unit.bastion_walker.name"
+points = 160
+speed = 2
+movement = 4
+hp = 14
+armor = "vehicle"
+tags = ["mechanical"]
+action_points = 2
+footprint = 2
+models = { min = 1, max = 1 }
+
+[[units.bastion_walker.groups]]
+role = "walker"
+count = 1
+fill = true
+weapons = ["mortar", "flame_projector"]
+
+# --- Brood (beasts) ------------------------------------------------------------------
+
+[units.ravager_swarm]
+name_key = "unit.ravager_swarm.name"
+points = 100
+speed = 8
+movement = 8
+hp = 1
+armor = "light"
+tags = ["beast", "swarm"]
+action_points = 1
+footprint = 1
+models = { min = 10, max = 30 }
+
+[[units.ravager_swarm.groups]]
+role = "ravager"
+count = 20
+fill = true
+weapons = ["rending_claws"]
+
+[units.spitter_brood]
+name_key = "unit.spitter_brood.name"
+points = 85
+speed = 6
+movement = 6
+hp = 1
+armor = "light"
+tags = ["beast"]
+action_points = 1
+footprint = 1
+models = { min = 5, max = 15 }
+
+[[units.spitter_brood.groups]]
+role = "spitter"
+count = 8
+fill = true
+weapons = ["spine_spitter", "talons"]
+
+[units.brood_tyrant]
+name_key = "unit.brood_tyrant.name"
+points = 180
+speed = 4
+movement = 5
+hp = 12
+armor = "monster"
+tags = ["beast"]
+action_points = 2
+footprint = 2
+models = { min = 1, max = 1 }
+abilities = [{ id = "regenerate", amount = 1 }]
+
+[[units.brood_tyrant.groups]]
+role = "tyrant"
+count = 1
+fill = true
+weapons = ["crusher_mandibles"]

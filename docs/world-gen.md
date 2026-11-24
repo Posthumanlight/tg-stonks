@@ -479,15 +479,34 @@ keeps an in-memory LRU of system skeletons and planets keyed by index and versio
 galaxy is generated once and held for the process lifetime. Version resolution needs pins
 from the DB, so callers pass versions in; `None` means unpinned (latest).
 
+### Debug snapshot (`gen_*` tables)
+To browse the generated world in a DB UI (e.g. the Supabase table editor), run
+`poetry run python server/app/cli/snapshot_world.py`. It generates every cluster, star,
+link and planet (respecting pins and custom names) and **replaces** the contents of
+`gen_snapshot`, `gen_clusters`, `gen_stars`, `gen_links`, `gen_planets` and
+`gen_planet_resources`. This is not an exception to "persist only deltas":
+- the game never reads these tables. They are a disposable view for humans and can be
+  dropped at any time without losing anything;
+- taking a snapshot pins nothing, so generator versions stay free to change;
+- the tables live on their own `MetaData` (`app/persistence/worldgen_snapshot.py`), are
+  created by the script rather than by Alembic, and are excluded from autogenerate in
+  `migrations/env.py`.
+
+After a content or generator change, re-run the script to refresh the snapshot.
+
 ---
 
 ## Delivery to the client
 
-Proposed (to be finalized in [protocol](protocol.md)):
-- `GET /api/world/galaxy` — clusters, stars (index, name, class, position, cluster),
-  links. It is static for the world, so it is served with an `ETag` derived from
-  `(galaxy_version, output hash)` and cached by the client.
-- `GET /api/world/systems/{s}` — the star + planets record, with custom names resolved.
+- **Implemented: `GET /api/world/galaxy`** (`server/app/api/world.py`, `GalaxyView`).
+  - **Contents:** the ellipse semi-axes; clusters (index, code, name, centre, radius);
+    stars (index, code, name, position, cluster, class, subclass, colour); links.
+  - **Pins:** star class comes from the `system` generator and honours `system` pins.
+  - **Build and caching:** the view is built once at startup. Its `ETag` is the SHA-256 of
+    the canonical JSON, and a matching `If-None-Match` gets 304.
+  - **Consumer:** the client's star chart ([client](client.md)).
+- Proposed: `GET /api/world/systems/{s}`, the star plus planets record with custom names
+  resolved.
 - Live changes (e.g. a renamed planet) arrive as WebSocket deltas for subscribed areas.
 
 ---
@@ -537,6 +556,7 @@ server/app/content/worldgen.py Pydantic schemas + loader for content/worldgen/*.
 server/app/persistence/
   models/world.py     worlds, worldgen_pins, body_names
   worldgen_repo.py    ensure_world, pin_for_delta, verify_pins, set_body_name, …
+  worldgen_snapshot.py  debug gen_* tables (not game state; see "Debug snapshot")
 content/worldgen/
   galaxy.toml  stars.toml  planets.toml  resources.toml  names.toml
 ```

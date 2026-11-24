@@ -1,0 +1,106 @@
+# Weapons. hits are per carrying model; damage is a dice expression ("D6+2", "2D3", "1").
+# Melee weapons always have range [1, 1] (abilities like `reach` extend it).
+
+# --- Concord (human) -----------------------------------------------------------------
+
+[weapons.pulse_rifle]
+name_key = "weapon.pulse_rifle.name"
+mode = "ranged"
+type = "small_arms"
+range = [1, 16]
+hits = 1
+damage = "1"
+
+[weapons.sidearm]
+name_key = "weapon.sidearm.name"
+mode = "ranged"
+type = "small_arms"
+range = [1, 8]
+hits = 1
+damage = "1"
+
+[weapons.rail_lance]
+name_key = "weapon.rail_lance.name"
+mode = "ranged"
+type = "anti_tank"
+range = [2, 20]
+hits = 1
+damage = "D6+2"
+ap_cost = 2
+abilities = ["heavy", { id = "anti", armor = "vehicle", percent = 150 }]
+
+[weapons.autocannon]
+name_key = "weapon.autocannon.name"
+mode = "ranged"
+type = "heavy"
+range = [2, 18]
+hits = 3
+damage = "2"
+abilities = ["heavy"]
+
+[weapons.flame_projector]
+name_key = "weapon.flame_projector.name"
+mode = "ranged"
+type = "flamer"
+range = [1, 6]
+hits = 1
+damage = "D3"
+abilities = ["ignores_cover", { id = "blast", per_models = 3 }]
+
+[weapons.mortar]
+name_key = "weapon.mortar.name"
+mode = "ranged"
+type = "artillery"
+range = [6, 28]
+hits = 1
+damage = "D3+1"
+ap_cost = 2
+abilities = ["indirect", { id = "blast", per_models = 5 }]
+
+[weapons.combat_knife]
+name_key = "weapon.combat_knife.name"
+mode = "melee"
+type = "blade"
+hits = 1
+damage = "1"
+
+[weapons.shock_maul]
+name_key = "weapon.shock_maul.name"
+mode = "melee"
+type = "blade"
+hits = 3
+damage = "D3"
+
+# --- Brood (beasts) ------------------------------------------------------------------
+
+[weapons.rending_claws]
+name_key = "weapon.rending_claws.name"
+mode = "melee"
+type = "claws"
+hits = 2
+damage = "1"
+abilities = [{ id = "anti", armor = "heavy", percent = 150 }]
+
+[weapons.spine_spitter]
+name_key = "weapon.spine_spitter.name"
+mode = "ranged"
+type = "small_arms"
+range = [1, 10]
+hits = 2
+damage = "1"
+abilities = ["assault"]
+
+[weapons.talons]
+name_key = "weapon.talons.name"
+mode = "melee"
+type = "claws"
+hits = 1
+damage = "1"
+
+[weapons.crusher_mandibles]
+name_key = "weapon.crusher_mandibles.name"
+mode = "melee"
+type = "claws"
+hits = 4
+damage = "D3+1"
+abilities = [{ id = "reach", squares = 1 }]

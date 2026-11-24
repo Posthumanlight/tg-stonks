@@ -34,5 +34,6 @@ build-backend = "poetry.core.masonry.api"
 dev = [
     "pytest (>=9.2.0,<10.0.0)",
     "pytest-asyncio (>=1.5.0,<2.0.0)",
-    "black (>=26.10.1,<27.0.0)"
+    "black (>=26.10.1,<27.0.0)",
+    "httpx (>=0.28.1,<0.29.0)"
 ]
