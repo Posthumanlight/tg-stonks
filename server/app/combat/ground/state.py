@@ -1,6 +1,6 @@
 """Combat state: frozen dataclasses, replaced (never mutated) as the fight progresses."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
 from app.combat.ground.board import Board, Square, footprint
 
@@ -38,10 +38,15 @@ class UnitState:
     waited: bool = False  # this round
     cooldowns: tuple[tuple[str, int], ...] = ()  # (ability, rounds left), only > 0
     uses: tuple[tuple[str, int], ...] = ()  # (ability, times used)
+    # Derived from `groups` once per instance (hot in every rules check).
+    _models: int = field(init=False, repr=False, compare=False, default=0)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_models", sum(g.alive for g in self.groups))
 
     @property
     def models(self) -> int:
-        return sum(g.alive for g in self.groups)
+        return self._models
 
     @property
     def initial_models(self) -> int:
@@ -49,7 +54,7 @@ class UnitState:
 
     @property
     def alive(self) -> bool:
-        return self.models > 0
+        return self._models > 0
 
     @property
     def squares(self) -> tuple[Square, ...]:

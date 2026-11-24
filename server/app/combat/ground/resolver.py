@@ -6,6 +6,8 @@ transactional — a failing run restores the previous state, RNG state and event
 """
 
 import random
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from fractions import Fraction
 from typing import Any
@@ -184,6 +186,9 @@ class Resolver:
         self, ctx: hooks.HookContext
     ) -> list[tuple[tuple[int, ...], BoundTrigger, UnitId, str]]:
         state, ruleset, event = self.state, self.ruleset, ctx.event
+        listeners = ruleset.listeners_for(event)
+        if not listeners:
+            return []  # fast path: nobody has a trigger on this event
         order = {uid: i for i, uid in enumerate(state.round_order)}
 
         def position(uid: UnitId) -> int:
@@ -191,7 +196,7 @@ class Resolver:
 
         found: list[tuple[tuple[int, ...], BoundTrigger, UnitId, str]] = []
         wielder = ctx.wielder
-        if ctx.weapon is not None and wielder is not None:
+        if ctx.weapon in listeners.weapons and wielder is not None:
             for ai, bound in enumerate(ruleset.weapon_abilities.get(ctx.weapon, ())):
                 for trig in bound.by_event.get(event, ()):
                     key = (-trig.priority, position(wielder), 0, ai, trig.index)
@@ -199,6 +204,10 @@ class Resolver:
         involved = (ctx.unit, ctx.target)
         for unit in state.units:
             if not unit.alive and unit.uid not in involved:
+                continue
+            if unit.unit_type not in listeners.unit_types and not any(
+                s.status in listeners.statuses for s in unit.statuses
+            ):
                 continue
             sources = [
                 (1, ai, b)
@@ -227,6 +236,18 @@ class Resolver:
             return False
         same_side = self.state.unit(ctx.unit).side == self.state.unit(owner).side
         return same_side if scope == "ally" else not same_side
+
+    @contextmanager
+    def sandbox(self) -> Iterator[None]:
+        """Run checks whose side effects must not stick (legal-action previews): the
+        state, RNG and event log are restored afterwards."""
+        saved = (self.state, self.rng.getstate(), len(self.events), self.end_requested)
+        try:
+            yield
+        finally:
+            self.state, rng_state, n_events, self.end_requested = saved
+            self.rng.setstate(rng_state)
+            del self.events[n_events:]
 
     def run_trigger(
         self,

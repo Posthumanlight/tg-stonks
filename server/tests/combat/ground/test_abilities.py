@@ -138,6 +138,10 @@ def scenario_bodyguard(ruleset) -> None:
     hits = [e for e in events if isinstance(e, HitResolved)]
     assert hits and all(e.target == 1 for e in hits)
     assert state.unit(0).wounded is None and state.unit(0).models == 1
+    # damage is computed against the bodyguard: 1 × small arms vs heavy (50%) → 0 or 1,
+    # averaging ½ (it would be a flat 1 against the warden's character armor)
+    assert {e.damage for e in hits} <= {0, 1}
+    assert 0 < sum(e.damage for e in hits) < len(hits)
 
 
 @scenario("rally_cry")

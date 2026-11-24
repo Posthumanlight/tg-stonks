@@ -289,26 +289,31 @@ it. The pipeline:
 2. **Declare** (`attack_declared`). AP is spent, and movement is cleared unless a later
    hook keeps it.
 3. **Hits** (`hits_calculating`): `hits = weapon.hits × carriers`, then hooks add to it or
-   multiply it. A fractional result is rounded stochastically (step 5).
-4. **Per hit** (`damage_calculating`, once per hit):
+   multiply it. A fractional result is rounded stochastically (step 6).
+4. **Pick the victim**, once per hit (`hit_allocating`).
+   - Hooks may redirect the hit to another living unit (bodyguard) or prevent it.
+   - Otherwise the victim is the target.
+   - This happens *before* damage is computed, so a redirected hit uses the **victim's**
+     armor and cover. Cover is recomputed from the attacker to the victim.
+5. **Damage**, per hit (`damage_calculating`, whose target is the victim):
    ```
    value = (roll(weapon.damage) + flat_bonus)
-           × armor_percent / 100            # damage_table[weapon.type][target.armor]
+           × armor_percent / 100            # damage_table[weapon.type][victim.armor]
            × (1/2 if cover and ranged)      # hooks can set cover on or off
            × Π multipliers                  # from hooks, Fractions
    ```
-5. **Stochastic rounding.** `damage = floor(value)`, plus 1 with probability
+6. **Stochastic rounding.** `damage = floor(value)`, plus 1 with probability
    `frac(value)`, drawn from the combat RNG and logged. The expected damage stays exact:
    cover halves damage *on average*, and a 1-damage weapon against cover has a 50%
    chance to deal 1 (not always 0, not always 1). The result is never below 0.
-6. **Allocate** (`hit_allocating`):
-   - The hit goes to the wounded model if there is one. Otherwise it goes to a model from
-     the living group with the lowest `casualty_priority`.
-   - Hooks may redirect the hit to another unit (bodyguard).
+7. **Apply to a model:**
+   - The hit goes to the victim's wounded model if there is one. Otherwise it goes to a
+     model from the living group with the lowest `casualty_priority`.
    - **No spill:** damage beyond the model's remaining HP is lost.
    - A model at 0 HP is removed (`model_killed`). If the unit has no models left, it is
-     destroyed (`unit_destroyed`) and the remaining hits are lost.
-7. **Resolve** (`attack_resolved`). Totals are known here: hits, damage and kills.
+     destroyed (`unit_destroyed`). When the original target is destroyed, the remaining
+     hits are lost.
+8. **Resolve** (`attack_resolved`). Totals are known here: hits, damage and kills.
 
 A whole weapon group fires at one target. All hits are resolved in order, so the log
 reads hit by hit for the client to animate.
@@ -527,6 +532,11 @@ forbidden import. The rest is enforced in review.
 fight bumps `COMBAT_RULES_VERSION`. Exact replays are guaranteed only for the same rules
 version and content hash.
 
+Rules version log:
+- **v1:** initial engine.
+- **v2:** each hit picks its victim (`hit_allocating`) before damage is computed, so
+  redirected hits use the victim's armor and cover.
+
 ### Event catalogue
 Each event has a **subject** (the unit `scope` matches against), context fields, and
 the mutators its context class adds.
@@ -545,7 +555,7 @@ the mutators its context class adds.
 | `attack_declared` | attacker / target | `weapon` | `set_ap_cost(int)` |
 | `hits_calculating` | attacker / target | `weapon`, `hits` | `add_hits(int)`, `multiply_hits(Fraction)` |
 | `damage_calculating` | attacker / target | `weapon`, `roll`, `cover` | `add_damage(int)`, `multiply_damage(Fraction)`, `set_cover(bool)`, `set_armor_percent(int)` |
-| `hit_allocating` | attacker / target | `damage` | `redirect_hit(unit)`, `prevent_hit()` |
+| `hit_allocating` | attacker / target | – (runs before damage is computed) | `redirect_hit(unit)`, `prevent_hit()` |
 | `attack_resolved` | attacker / target | `weapon`, `total_damage`, `kills` | `keep_movement()` |
 | `unit_damaged` | damaged unit / source | `damage`, `kills`, `weapon` (may be `None`) | – |
 | `model_killed` | victim / source | `role` | – |
@@ -757,15 +767,27 @@ A v1 greedy AI (`ai.py`, `choose_action(state, rng)`) is not written yet.
 - **RNG.** One `random.Random` per combat, seeded from the world sim (via
   `derive_seed`, as in `server/app/world/seeds.py`). The engine never touches global
   `random`.
-- **Persistence.** The combat record, plus periodic state snapshots for fast resume.
-  These are written when the combat ends and at checkpoints, never once per action in the
-  hot path (rule 5).
-- **Protocol** (to be specified in [protocol](protocol.md)):
-  - Intents: `combat.move`, `combat.attack`, `combat.ability`, `combat.wait`,
-    `combat.skip`.
-  - Server messages: `combat.events` (the public event log, including rolls) and
-    `combat.legal` (moves and targets for the active unit). The client only animates and
-    highlights.
+- **Running combats:** the engine runs inside **combat worker processes**, wrapped by
+  `CombatInstance`. The doc for this is
+  [architecture › Combat instances](architecture.md#combat-instances), which covers:
+  - placement on workers;
+  - seat checks;
+  - the hotseat demo from `content/combat/demo.toml`;
+  - timers;
+  - persistence of the record (setup, seed, content hash, rules version, actions) with
+    write-behind;
+  - recovery by `replay` after a restart.
+- **Protocol:** clients send `combat.action {combat_id, action}` over `/ws`. The server
+  pushes `combat.events` (the public event log, including rolls), `combat.legal` (moves
+  and targets for the active unit) and `combat.snapshot`. The client only animates and
+  highlights. See [protocol](protocol.md#websocket).
+- **Performance budget:** `apply_action` plus the legal-action recompute must stay
+  **≤ 5 ms p95** on a 32×32 board (see
+  [architecture › Scalability](architecture.md#scalability-and-capacity-model)).
+  - Today it is about 18–24 ms, mostly from scanning every square for area abilities and
+    recomputing legal actions after each action.
+  - Planned fixes: cache `LegalActions` per state, cheaper square-target enumeration, a
+    single legal recompute per action, and a benchmark test.
 
 ### Content files — `content/combat/`
 

@@ -2,7 +2,8 @@
 attacks when leaving an enemy's reach (docs/combat-ground.md "Board", "Engagement")."""
 
 import heapq
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from app.combat.ground import events as ev
@@ -29,10 +30,21 @@ REACH = 1  # engagement reach (opportunity attacks)
 class MoveOption:
     destination: Square
     cost: int
-    path: tuple[Square, ...]
-    provokes: tuple[
-        UnitId, ...
-    ]  # enemies that would get an opportunity attack (preview)
+    # Enemies that would get an opportunity attack along the path (preview).
+    provokes: tuple[UnitId, ...]
+    # The search tree the path is read from, shared by all options of one search.
+    _start: Square = field(repr=False, compare=False)
+    _previous: Mapping[Square, Square] = field(repr=False, compare=False)
+
+    @property
+    def path(self) -> tuple[Square, ...]:
+        """Successive origins from (excluding) the unit's square to the destination.
+        Built on demand: only the chosen destination ever needs it."""
+        path = [self.destination]
+        while path[-1] in self._previous and self._previous[path[-1]] != self._start:
+            path.append(self._previous[path[-1]])
+        path.reverse()
+        return tuple(path)
 
 
 def first_melee_weapon(ruleset: "CombatRuleset", unit: UnitState) -> str | None:
@@ -49,9 +61,8 @@ def step_allowed(
     if chebyshev(frm, to) != 1:
         return False
     dx, dy = to[0] - frm[0], to[1] - frm[1]
-    if (
-        dx and dy
-    ):  # no corner cutting past impassable terrain (units don't block corners)
+    # No corner cutting past impassable terrain (units don't block corners).
+    if dx and dy:
         side_a = footprint((frm[0] + dx, frm[1]), size)
         side_b = footprint((frm[0], frm[1] + dy), size)
         if not (view.terrain_passable(side_a) and view.terrain_passable(side_b)):
@@ -75,60 +86,130 @@ def leaving_reach(
     return found
 
 
+class _FootprintCache:
+    """Memoized footprint checks for one mover on one state (the pathfinding hot path)."""
+
+    def __init__(self, view: BoardView, uid: UnitId) -> None:
+        self.view, self.uid = view, uid
+        self.size = view.state.unit(uid).size
+        self._terrain: dict[Square, bool] = {}
+        self._fits: dict[tuple[Square, bool], bool] = {}
+        self._cost: dict[Square, int] = {}
+
+    def terrain_ok(self, origin: Square) -> bool:
+        ok = self._terrain.get(origin)
+        if ok is None:
+            ok = self._terrain[origin] = self.view.terrain_passable(footprint(origin, self.size))
+        return ok
+
+    def fits(self, origin: Square, ending: bool) -> bool:
+        key = (origin, ending)
+        ok = self._fits.get(key)
+        if ok is None:
+            ok = self._fits[key] = self.view.fits(footprint(origin, self.size), self.uid, ending=ending)
+        return ok
+
+    def cost(self, origin: Square) -> int:
+        cost = self._cost.get(origin)
+        if cost is None:
+            cost = self._cost[origin] = self.view.step_cost(footprint(origin, self.size))
+        return cost
+
+    def step_ok(self, frm: Square, to: Square) -> bool:
+        """Same rule as `step_allowed(ending=False)` for an adjacent step."""
+        dx, dy = to[0] - frm[0], to[1] - frm[1]
+        if dx and dy and not (
+            self.terrain_ok((frm[0] + dx, frm[1])) and self.terrain_ok((frm[0], frm[1] + dy))
+        ):
+            return False
+        return self.fits(to, False)
+
+
 def reachable(view: BoardView, uid: UnitId, budget: int) -> dict[Square, MoveOption]:
-    """Every destination reachable within `budget`, with the cheapest path (base costs)."""
-    state, ruleset = view.state, view.ruleset
-    unit = state.unit(uid)
-    start = unit.origin
+    """Every destination reachable within `budget`, with the cheapest path (base costs).
+
+    Dijkstra; ties resolve by (cost, square) heap order and first relaxation wins, so
+    paths are deterministic. Hot path: lookups are bound to locals.
+    """
+    state = view.state
+    start = state.unit(uid).origin
+    cache = _FootprintCache(view, uid)
+    terrain_ok, fits, step_cost = cache.terrain_ok, cache.fits, cache.cost
     best: dict[Square, int] = {start: 0}
+    best_get = best.get
     previous: dict[Square, Square] = {}
     heap: list[tuple[int, Square]] = [(0, start)]
+    pop, push = heapq.heappop, heapq.heappush
+    limit = budget + 1
     while heap:
-        cost, square = heapq.heappop(heap)
+        cost, square = pop(heap)
         if cost > best[square]:
             continue
+        x, y = square
         for dx, dy in NEIGHBOURS:
-            nxt = (square[0] + dx, square[1] + dy)
-            if not step_allowed(view, uid, square, nxt, ending=False):
+            nxt = (x + dx, y + dy)
+            # same rule as `step_allowed(ending=False)`: no corner cutting, then fit
+            if dx and dy and not (terrain_ok((x + dx, y)) and terrain_ok((x, y + dy))):
                 continue
-            new_cost = cost + view.step_cost(footprint(nxt, unit.size))
-            if new_cost <= budget and new_cost < best.get(nxt, budget + 1):
+            if not fits(nxt, False):
+                continue
+            new_cost = cost + step_cost(nxt)
+            if new_cost < best_get(nxt, limit):
                 best[nxt] = new_cost
                 previous[nxt] = square
-                heapq.heappush(heap, (new_cost, nxt))
+                push(heap, (new_cost, nxt))
 
-    options: dict[Square, MoveOption] = {}
-    for square in sorted(best):
-        if square == start or not view.fits(
-            footprint(square, unit.size), uid, ending=True
-        ):
-            continue
-        path = [square]
-        while path[-1] in previous and previous[path[-1]] != start:
-            path.append(previous[path[-1]])
-        path.reverse()
-        options[square] = MoveOption(
-            square,
-            best[square],
-            tuple(path),
-            _preview_provokes(ruleset, state, uid, path),
-        )
-    return options
+    provokes = _preview_provokes(view, uid, start, best, previous)
+    return {
+        square: MoveOption(square, best[square], provokes[square], start, previous)
+        for square in sorted(best)
+        if square != start and fits(square, True)
+    }
 
 
 def _preview_provokes(
-    ruleset: "CombatRuleset", state: CombatState, uid: UnitId, path: list[Square]
-) -> tuple[UnitId, ...]:
-    reactions = {u.uid: u.reactions for u in state.units}
-    provoked: list[UnitId] = []
-    frm = state.unit(uid).origin
-    for to in path:
-        for enemy in leaving_reach(state, uid, frm, to):
-            if reactions[enemy] > 0 and first_melee_weapon(ruleset, state.unit(enemy)):
-                reactions[enemy] -= 1
-                provoked.append(enemy)
-        frm = to
-    return tuple(provoked)
+    view: BoardView,
+    uid: UnitId,
+    start: Square,
+    best: dict[Square, int],
+    previous: dict[Square, Square],
+) -> dict[Square, tuple[UnitId, ...]]:
+    """Opportunity attacks along every path of the pathfinding tree, computed once per
+    square from its parent (paths share prefixes). Same rule as `leaving_reach` plus
+    one reaction per attack."""
+    state, ruleset = view.state, view.ruleset
+    mover = state.unit(uid)
+    reactors = [
+        e
+        for e in state.living()
+        if e.side != mover.side and e.reactions > 0 and first_melee_weapon(ruleset, e)
+    ]
+    in_reach: dict[tuple[UnitId, Square], bool] = {}
+
+    def reached(enemy: UnitState, origin: Square) -> bool:
+        key = (enemy.uid, origin)
+        hit = in_reach.get(key)
+        if hit is None:
+            hit = in_reach[key] = (
+                footprint_distance(origin, mover.size, enemy.origin, enemy.size) <= REACH
+            )
+        return hit
+
+    provokes: dict[Square, tuple[UnitId, ...]] = {start: ()}
+    for square in sorted(best, key=lambda s: (best[s], s)):  # parents before children
+        if square == start:
+            continue
+        parent = previous[square]
+        provoked = provokes[parent]
+        for enemy in reactors:
+            if (
+                reached(enemy, parent)
+                and not reached(enemy, square)
+                and provoked.count(enemy.uid) < enemy.reactions
+            ):
+                provoked = provoked + (enemy.uid,)
+        provokes[square] = provoked
+    return provokes
 
 
 def validate_path(

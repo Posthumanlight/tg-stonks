@@ -5,11 +5,18 @@ import { getGalaxy } from "../net/api";
 import type { GalaxyView, StarView } from "../protocol";
 
 export type GalaxyState =
+  | { readonly status: "idle" }
   | { readonly status: "loading" }
   | { readonly status: "ready"; readonly galaxy: GalaxyView }
   | { readonly status: "error"; readonly message: string };
 
-export const galaxyState = signal<GalaxyState>({ status: "loading" });
+export const galaxyState = signal<GalaxyState>({ status: "idle" });
+
+/** Load once (the galaxy is static per world); retry after an error. */
+export function ensureGalaxy(): void {
+  const status = galaxyState.peek().status;
+  if (status === "idle" || status === "error") void loadGalaxy();
+}
 
 /** Index of the star the player tapped on the chart, or null. */
 export const selectedStarIndex = signal<number | null>(null);

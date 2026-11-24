@@ -1,11 +1,14 @@
 import "./ui/styles.css";
 
+import { effect } from "@preact/signals";
 import { render } from "preact";
 
-import { startGame } from "./game/config";
+import { hideGame, showGame } from "./game/host";
 import { initI18n, t } from "./i18n";
 import { initPlatform } from "./platform/telegram";
-import { loadGalaxy } from "./state/galaxy";
+import { bootstrapAuth, currentUser } from "./state/auth";
+import { ensureGalaxy } from "./state/galaxy";
+import { screen, screenAfterAuth } from "./state/screen";
 import { App } from "./ui/App";
 
 function mustGet(id: string): HTMLElement {
@@ -18,6 +21,24 @@ const platform = initPlatform();
 initI18n(platform.languageCode);
 document.title = t("app.title");
 
+const gameRoot = mustGet("game");
 render(<App platform={platform} />, mustGet("ui"));
-startGame(mustGet("game"));
-void loadGalaxy();
+
+// Canvas screens show the Phaser game; DOM-only screens hide it.
+effect(() => {
+  if (screen.value === "galaxy") {
+    showGame(gameRoot);
+    ensureGalaxy();
+  } else {
+    hideGame(gameRoot);
+  }
+});
+
+// Signing in or out (including a session that expires) moves between screens.
+void bootstrapAuth().finally(() => {
+  screen.value = screenAfterAuth("boot", currentUser.peek() !== null);
+  effect(() => {
+    const signedIn = currentUser.value !== null;
+    screen.value = screenAfterAuth(screen.peek(), signedIn);
+  });
+});

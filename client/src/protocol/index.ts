@@ -5,10 +5,15 @@
  */
 export interface ProtocolModels {
   ClusterView: ClusterView;
+  ErrorBody: ErrorBody;
   GalaxyView: GalaxyView;
   HealthView: HealthView;
   LinkView: LinkView;
+  LoginRequest: LoginRequest;
+  RegisterRequest: RegisterRequest;
   StarView: StarView;
+  TokenResponse: TokenResponse;
+  UserView: UserView;
 }
 export interface ClusterView {
   code: string;
@@ -17,6 +22,13 @@ export interface ClusterView {
   radius: number;
   x: number;
   y: number;
+}
+/**
+ * Every HTTP error: an i18n reason key and an optional developer detail.
+ */
+export interface ErrorBody {
+  detail?: string | null;
+  reason_key: string;
 }
 /**
  * `GET /api/world/galaxy`: everything the star chart needs. Static per world.
@@ -52,6 +64,24 @@ export interface StarView {
 export interface HealthView {
   protocol_version: number;
   status: "ok";
+}
+export interface LoginRequest {
+  password: string;
+  username: string;
+}
+export interface RegisterRequest {
+  password: string;
+  username: string;
+}
+export interface TokenResponse {
+  access_token: string;
+  expires_in: number;
+  user: UserView;
+}
+export interface UserView {
+  role: string;
+  user_id: number;
+  username: string;
 }
 
 export const PROTOCOL_VERSION = 1;

@@ -155,24 +155,45 @@ def resolve_hits(
     cover: bool,
     weapon: str | None,
 ) -> tuple[int, int]:
-    """Roll and allocate hits one by one. Returns (total damage applied, models killed)."""
+    """Roll and allocate hits one by one. Returns (total damage applied, models killed).
+
+    Each hit first picks its victim (`hit_allocating`: redirects, prevention), then its
+    damage is computed against that victim — its armor, its cover, hooks seeing it as
+    the target. `cover` is the cover of the original `target`.
+    """
     table = res.ruleset.content.damage_table[weapon_type]
     tag = f"weapon:{weapon}" if weapon else f"hits:{weapon_type}"
     total = kills = 0
     for index in range(n_hits):
         if not res.state.unit(target).alive:
             break  # remaining hits are lost
+
+        allocating = hooks.HitAllocating(res, unit=source, target=target, weapon=weapon)
+        res.dispatch(allocating)
+        if allocating.prevented:
+            res.emit(ev.HitPrevented(source, target, index))
+            continue
+        victim = target
+        if (
+            allocating.redirect is not None
+            and res.state.unit(allocating.redirect).alive
+        ):
+            victim = allocating.redirect
+        victim_cover = (
+            cover if victim == target else ranged and res.cover_for(source, victim)
+        )
+
         roll = res.roll(dice, tag)
         damage_ctx = hooks.DamageCalculating(
             res,
             unit=source,
-            target=target,
+            target=victim,
             weapon=weapon,
             weapon_type=weapon_type,
             ranged=ranged,
             roll=roll,
-            cover=cover,
-            armor_percent=table[res.unit_def(target).armor],
+            cover=victim_cover,
+            armor_percent=table[res.unit_def(victim).armor],
         )
         res.dispatch(damage_ctx)
         value = Fraction(damage_ctx.roll + damage_ctx.flat) * Fraction(
@@ -185,19 +206,6 @@ def resolve_hits(
             value *= factor
         damage = res.round_value(max(value, Fraction(0)), tag)
 
-        allocating = hooks.HitAllocating(
-            res, unit=source, target=target, weapon=weapon, damage=damage
-        )
-        res.dispatch(allocating)
-        if allocating.prevented:
-            res.emit(ev.HitPrevented(source, target, index))
-            continue
-        victim = target
-        if (
-            allocating.redirect is not None
-            and res.state.unit(allocating.redirect).alive
-        ):
-            victim = allocating.redirect
         applied, killed = res.apply_damage(
             victim, damage, source=source, weapon=weapon, index=index, cover=in_cover
         )

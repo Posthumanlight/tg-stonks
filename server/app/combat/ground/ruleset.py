@@ -89,6 +89,21 @@ class BoundAbility:
     by_event: dict[str, tuple[BoundTrigger, ...]] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class Listeners:
+    """Who has triggers on one event: lets dispatch skip events nobody listens to."""
+
+    weapons: frozenset[str] = frozenset()
+    unit_types: frozenset[str] = frozenset()
+    statuses: frozenset[str] = frozenset()
+
+    def __bool__(self) -> bool:
+        return bool(self.weapons or self.unit_types or self.statuses)
+
+
+NO_LISTENERS = Listeners()
+
+
 @dataclass(frozen=True)
 class CombatRuleset:
     content: CombatContent
@@ -96,10 +111,14 @@ class CombatRuleset:
     weapon_abilities: dict[str, tuple[BoundAbility, ...]]
     unit_abilities: dict[str, tuple[BoundAbility, ...]]
     statuses: dict[str, BoundAbility]
+    listeners: dict[str, Listeners] = field(default_factory=dict)
 
     @property
     def rules(self):  # noqa: ANN201 - RulesContent
         return self.content.rules
+
+    def listeners_for(self, event: str) -> Listeners:
+        return self.listeners.get(event, NO_LISTENERS)
 
     def unit_def(self, unit_type: str) -> Unit:
         return self.content.units[unit_type]
@@ -265,22 +284,49 @@ def compile_ruleset(content: CombatContent, digest: str) -> CombatRuleset:
         except RulesetError as exc:
             raise RulesetError(f"{where}: {exc}") from exc
 
+    weapon_abilities = {
+        wid: bind_all(f"weapon {wid!r}", w.abilities)
+        for wid, w in content.weapons.items()
+    }
+    unit_abilities = {
+        uid: bind_all(f"unit {uid!r}", u.abilities) for uid, u in content.units.items()
+    }
+    statuses = {
+        sid: bind_ability(AbilityRef(id=sid), content)
+        for sid in sorted(content.status_ids())
+    }
     return CombatRuleset(
         content=content,
         content_hash=digest,
-        weapon_abilities={
-            wid: bind_all(f"weapon {wid!r}", w.abilities)
-            for wid, w in content.weapons.items()
-        },
-        unit_abilities={
-            uid: bind_all(f"unit {uid!r}", u.abilities)
-            for uid, u in content.units.items()
-        },
-        statuses={
-            sid: bind_ability(AbilityRef(id=sid), content)
-            for sid in sorted(content.status_ids())
-        },
+        weapon_abilities=weapon_abilities,
+        unit_abilities=unit_abilities,
+        statuses=statuses,
+        listeners=_index_listeners(weapon_abilities, unit_abilities, statuses),
     )
+
+
+def _index_listeners(
+    weapon_abilities: dict[str, tuple[BoundAbility, ...]],
+    unit_abilities: dict[str, tuple[BoundAbility, ...]],
+    statuses: dict[str, BoundAbility],
+) -> dict[str, Listeners]:
+    found: dict[str, dict[str, set[str]]] = {}
+
+    def add(kind: str, key: str, bounds: tuple[BoundAbility, ...]) -> None:
+        for bound in bounds:
+            for event in bound.by_event:
+                found.setdefault(event, {}).setdefault(kind, set()).add(key)
+
+    for wid, bounds in weapon_abilities.items():
+        add("weapons", wid, bounds)
+    for unit_type, bounds in unit_abilities.items():
+        add("unit_types", unit_type, bounds)
+    for sid, bound in statuses.items():
+        add("statuses", sid, (bound,))
+    return {
+        event: Listeners(**{kind: frozenset(keys) for kind, keys in kinds.items()})
+        for event, kinds in found.items()
+    }
 
 
 def ruleset_from_raw(raw: dict[str, Any]) -> CombatRuleset:

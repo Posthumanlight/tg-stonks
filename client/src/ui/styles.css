@@ -161,3 +161,82 @@ button.icon {
   margin: 0;
   font-variant-numeric: tabular-nums;
 }
+
+/* --- DOM screens (login, lobby) -------------------------------------------------- */
+
+.screen-center {
+  margin: auto;
+  width: 100%;
+  max-width: 360px;
+  pointer-events: auto;
+}
+
+.card {
+  padding: 20px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field input {
+  min-height: var(--tap);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0b1222;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* no iOS zoom-on-focus */
+  user-select: text;
+}
+
+.field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+button.primary {
+  background: #2a3f6b;
+  border-color: #3a5590;
+  font-weight: 600;
+}
+
+button.link {
+  border: none;
+  background: none;
+  color: var(--muted);
+  text-decoration: underline;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.error {
+  margin: 0;
+  color: #ff9b8a;
+  font-size: 14px;
+}
+
+.topbar {
+  align-items: center;
+}

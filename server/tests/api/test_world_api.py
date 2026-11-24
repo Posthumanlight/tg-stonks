@@ -1,46 +1,30 @@
-from collections.abc import AsyncIterator
-from pathlib import Path
-
-import httpx
-import pytest
-from sqlalchemy.ext.asyncio import async_sessionmaker
-
 from app.api.world import build_galaxy_view
 from app.content.worldgen import load_worldgen_content
-from app.main import create_app
-from app.persistence.db import Base, create_engine
 from app.protocol import PROTOCOL_VERSION
 from app.world.generator import WorldGenerator
 
-SEED = 42
+from tests.support import WORLD_SEED, TestApp
+
+SEED = WORLD_SEED
 
 
-@pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[httpx.AsyncClient]:
-    engine = create_engine(f"sqlite+aiosqlite:///{tmp_path / 'api.db'}")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    app = create_app(
-        sessionmaker=async_sessionmaker(engine, expire_on_commit=False),
-        world_seed=SEED,
-        client_dist=None,
-    )
-    async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-            yield c
-    await engine.dispose()
-
-
-async def test_health(client: httpx.AsyncClient) -> None:
-    response = await client.get("/api/health")
+async def test_health_is_public(test_app: TestApp) -> None:
+    response = await test_app.client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "protocol_version": PROTOCOL_VERSION}
 
 
-async def test_galaxy_payload_and_etag(client: httpx.AsyncClient) -> None:
+async def test_galaxy_requires_auth(test_app: TestApp) -> None:
+    response = await test_app.client.get("/api/world/galaxy")
+    assert response.status_code == 401
+    assert response.json()["reason_key"] == "auth.missing_token"
+
+
+async def test_galaxy_payload_and_etag(test_app: TestApp) -> None:
+    headers = await test_app.auth_headers()
+    client = test_app.client
     content = load_worldgen_content()
-    response = await client.get("/api/world/galaxy")
+    response = await client.get("/api/world/galaxy", headers=headers)
     assert response.status_code == 200
     etag = response.headers["etag"]
     body = response.json()
@@ -51,14 +35,18 @@ async def test_galaxy_payload_and_etag(client: httpx.AsyncClient) -> None:
     assert all(0 <= l["a"] < l["b"] < star_count for l in body["links"])
     assert {s["star_class"] for s in body["stars"]} <= set(content.stars.classes)
 
-    again = await client.get("/api/world/galaxy")
+    again = await client.get("/api/world/galaxy", headers=headers)
     assert again.headers["etag"] == etag
 
-    cached = await client.get("/api/world/galaxy", headers={"If-None-Match": etag})
+    cached = await client.get(
+        "/api/world/galaxy", headers={**headers, "If-None-Match": etag}
+    )
     assert cached.status_code == 304
     assert cached.content == b""
 
-    stale = await client.get("/api/world/galaxy", headers={"If-None-Match": '"x"'})
+    stale = await client.get(
+        "/api/world/galaxy", headers={**headers, "If-None-Match": '"x"'}
+    )
     assert stale.status_code == 200
 
 

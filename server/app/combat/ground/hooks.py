@@ -482,20 +482,16 @@ class DamageCalculating(HookContext):
 
 
 class HitAllocating(HookContext):
+    """Picks the hit's victim before its damage is computed (so the damage uses the
+    victim's armor and cover)."""
+
     event = "hit_allocating"
     _mutable = ("redirect", "prevented")
 
     def __init__(
-        self,
-        res: "Resolver",
-        *,
-        unit: UnitId,
-        target: UnitId,
-        weapon: str | None,
-        damage: int,
+        self, res: "Resolver", *, unit: UnitId, target: UnitId, weapon: str | None
     ) -> None:
         super().__init__(res, unit=unit, target=target, weapon=weapon)
-        self.damage = damage
         self.redirect: UnitId | None = None
         self.prevented = False
 

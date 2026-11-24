@@ -9,14 +9,18 @@ is reproducible from `CombatRecord` (setup, seed, actions) via `replay`.
 """
 
 import random
-from collections.abc import Callable
+from collections import OrderedDict
 from dataclasses import dataclass, replace
-from typing import TypeVar
 
 from app.combat.ground import events as ev
 from app.combat.ground import hooks
 from app.combat.ground import turn_order
-from app.combat.ground.ability_use import check_ability, resolve_target, use_ability
+from app.combat.ground.ability_use import (
+    check_ability,
+    legal_targets,
+    resolve_target,
+    use_ability,
+)
 from app.combat.ground.actions import Action, Attack, Move, Skip, UseAbility, Wait
 from app.combat.ground.attack import check_attack, resolve_attack
 from app.combat.ground.board import Square, footprint_distance
@@ -32,7 +36,7 @@ from app.combat.ground.setup import CombatSetup, SetupError, build_unit, validat
 from app.combat.ground.state import CombatState, UnitId
 
 # Bump when a rules or ability-function change alters fight outcomes (replays).
-COMBAT_RULES_VERSION = 1
+COMBAT_RULES_VERSION = 2  # v2: redirected hits use the victim's armor and cover
 
 __all__ = [
     "COMBAT_RULES_VERSION",
@@ -142,25 +146,28 @@ def start_combat(
 
 # --- legal actions -----------------------------------------------------------------------
 
-T = TypeVar("T")
-
-
-def _isolated(res: Resolver, base: CombatState, check: Callable[[], T]) -> T:
-    """Run a check on the base state; whatever hooks did to the state is thrown away."""
-    res.state = base
-    res.events.clear()
-    try:
-        return check()
-    finally:
-        res.state = base
-        res.events.clear()
+_LEGAL_CACHE_SIZE = 64
+# Memo of `legal_actions` by state identity (states are immutable). The engine computes
+# legal actions after every action anyway (to auto-end activations); the caller sending
+# them to the client then gets the same result for free.
+_legal_cache: "OrderedDict[int, tuple[CombatState, CombatRuleset, LegalActions]]" = (
+    OrderedDict()
+)
 
 
 def legal_actions(ruleset: CombatRuleset, state: CombatState) -> LegalActions | None:
     """What the active unit may do now (None when nobody is active or the fight is over)."""
     if state.outcome is not None or state.active is None:
         return None
-    return _legal(Resolver(ruleset, state, random.Random(0), preview=True))
+    hit = _legal_cache.get(id(state))
+    if hit is not None and hit[0] is state and hit[1] is ruleset:
+        _legal_cache.move_to_end(id(state))
+        return hit[2]
+    legal = _legal(Resolver(ruleset, state, random.Random(0), preview=True))
+    _legal_cache[id(state)] = (state, ruleset, legal)
+    if len(_legal_cache) > _LEGAL_CACHE_SIZE:
+        _legal_cache.popitem(last=False)
+    return legal
 
 
 def _legal(res: Resolver) -> LegalActions:
@@ -182,59 +189,27 @@ def _legal(res: Resolver) -> LegalActions:
             continue
         definition = ruleset.weapon(weapon)
         for target in enemies:
-            if (
-                _isolated(res, base, lambda: check_attack(res, uid, weapon, target))
-                is None
-            ):
-                cover = definition.mode == "ranged" and _isolated(
-                    res, base, lambda: res.cover_for(uid, target)
-                )
+            with res.sandbox():
+                legal = check_attack(res, uid, weapon, target) is None
+                cover = legal and definition.mode == "ranged" and res.cover_for(uid, target)
+            if legal:
                 attacks.append(AttackOption(weapon, target, definition.ap_cost, cover))
 
     abilities = []
     for bound in ruleset.unit_abilities[unit.unit_type]:
-        definition = bound.definition
-        if definition.kind != "active" or definition.targeting is None:
+        if bound.definition.kind != "active":
             continue
-        aid, targeting = bound.ability_id, definition.targeting
-        target_units: list[UnitId] = []
-        target_squares: list[Square] = []
-        if targeting.type == "square":
-            x0, y0 = unit.origin
-            r = targeting.range
-            for y in range(y0 - r, y0 + unit.size + r):
-                for x in range(x0 - r, x0 + unit.size + r):
-                    if not base.board.in_bounds((x, y)):
-                        continue
-                    if (
-                        _isolated(
-                            res,
-                            base,
-                            lambda: check_ability(res, uid, aid, None, (x, y)),
-                        )
-                        is None
-                    ):
-                        target_squares.append((x, y))
-        else:
-            candidates = (
-                [uid] if targeting.type == "self" else [u.uid for u in base.living()]
-            )
-            for target in candidates:
-                if (
-                    _isolated(
-                        res, base, lambda: check_ability(res, uid, aid, target, None)
-                    )
-                    is None
-                ):
-                    target_units.append(target)
+        target_units, target_squares = legal_targets(res, uid, bound)
         if target_units or target_squares:
             abilities.append(
                 AbilityOption(
-                    aid, definition.ap_cost, tuple(target_units), tuple(target_squares)
+                    bound.ability_id,
+                    bound.definition.ap_cost,
+                    tuple(target_units),
+                    tuple(target_squares),
                 )
             )
 
-    res.state = base
     return LegalActions(
         unit=uid,
         moves=moves,
@@ -272,41 +247,40 @@ def apply_action(
     return res.state, res.events
 
 
+def _require(reason: str | None) -> None:
+    """Raise `IllegalAction` when a rules check returned a reason."""
+    if reason is not None:
+        raise IllegalAction(reason)
+
+
 def _perform(res: Resolver, uid: UnitId, action: Action) -> None:
     active = res.state.active
     assert active is not None
-    if isinstance(action, Move):
-        if active.movement_locked:
-            raise IllegalAction("move.forbidden.after_attack")
-        path = tuple(tuple(square) for square in action.path)
-        reason = validate_path(res.view, uid, path, active.movement_left)  # type: ignore[arg-type]
-        if reason is not None:
-            raise IllegalAction(reason)
-        execute_move(res, uid, path)  # type: ignore[arg-type]
-    elif isinstance(action, Attack):
-        if not 0 <= action.target < len(res.state.units):
-            raise IllegalAction("attack.forbidden.target_dead")
-        reason = check_attack(res, uid, action.weapon, action.target)
-        if reason is not None:
-            raise IllegalAction(reason)
-        resolve_attack(res, uid, action.weapon, action.target)
-    elif isinstance(action, UseAbility):
-        square = (
-            tuple(action.target_square) if action.target_square is not None else None
-        )
-        target = resolve_target(res, uid, action.ability, action.target_unit)
-        reason = check_ability(res, uid, action.ability, target, square)  # type: ignore[arg-type]
-        if reason is not None:
-            raise IllegalAction(reason)
-        use_ability(res, uid, action.ability, target, square)  # type: ignore[arg-type]
-    elif isinstance(action, Wait):
-        if not turn_order.can_wait(res):
-            raise IllegalAction("wait.forbidden")
-        turn_order.wait(res)
-    elif isinstance(action, Skip):
-        turn_order.end_activation(res)
-    else:
-        raise IllegalAction("combat.forbidden.unknown_action")
+    match action:
+        case Move(path=path):
+            if active.movement_locked:
+                raise IllegalAction("move.forbidden.after_attack")
+            squares = tuple((x, y) for x, y in path)  # JSON gives lists
+            _require(validate_path(res.view, uid, squares, active.movement_left))
+            execute_move(res, uid, squares)
+        case Attack(weapon=weapon, target=target):
+            if not 0 <= target < len(res.state.units):
+                raise IllegalAction("attack.forbidden.target_dead")
+            _require(check_attack(res, uid, weapon, target))
+            resolve_attack(res, uid, weapon, target)
+        case UseAbility(ability=ability, target_unit=unit, target_square=square):
+            square = None if square is None else (square[0], square[1])
+            unit = resolve_target(res, uid, ability, unit)
+            _require(check_ability(res, uid, ability, unit, square))
+            use_ability(res, uid, ability, unit, square)
+        case Wait():
+            if not turn_order.can_wait(res):
+                raise IllegalAction("wait.forbidden")
+            turn_order.wait(res)
+        case Skip():
+            turn_order.end_activation(res)
+        case _:
+            raise IllegalAction("combat.forbidden.unknown_action")
 
 
 def _after_action(res: Resolver) -> None:
@@ -324,8 +298,8 @@ def _after_action(res: Resolver) -> None:
 
 
 def _has_options(res: Resolver) -> bool:
-    preview = Resolver(res.ruleset, res.state, random.Random(0), preview=True)
-    return _legal(preview).any_besides_skip()
+    legal = legal_actions(res.ruleset, res.state)
+    return legal is not None and legal.any_besides_skip()
 
 
 def _advance(res: Resolver) -> None:

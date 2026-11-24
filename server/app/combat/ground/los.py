@@ -13,23 +13,29 @@ from app.combat.ground.state import UnitId
 from app.combat.ground.view import BoardView
 
 
-def _span(p: int, d: int, low: int) -> tuple[Fraction, Fraction] | None:
-    """Open t-interval where coordinate p + d·t lies strictly inside (low, low + 2)."""
+def _span(p: int, d: int, low: int) -> tuple[int, int, int] | None:
+    """Open t-interval (n1/den, n2/den), den > 0, where coordinate p + d·t lies strictly
+    inside (low, low + 2). Integers only: exact and fast."""
     if d == 0:
-        return (Fraction(0), Fraction(1)) if low < p < low + 2 else None
-    t1, t2 = Fraction(low - p, d), Fraction(low + 2 - p, d)
-    return (t1, t2) if t1 < t2 else (t2, t1)
+        return (0, 1, 1) if low < p < low + 2 else None
+    if d > 0:
+        return (low - p, low + 2 - p, d)
+    return (p - low - 2, p - low, -d)
 
 
 def _entry(p: tuple[int, int], d: tuple[int, int], square: Square) -> Fraction | None:
     """Segment parameter where it enters the square's interior, or None if it never does."""
-    lo, hi = Fraction(0), Fraction(1)
+    lo_n, lo_d, hi_n, hi_d = 0, 1, 1, 1  # the segment's own range t ∈ [0, 1]
     for axis in (0, 1):
         span = _span(p[axis], d[axis], 2 * square[axis])
         if span is None:
             return None
-        lo, hi = max(lo, span[0]), min(hi, span[1])
-    return lo if lo < hi else None
+        n1, n2, den = span
+        if n1 * lo_d > lo_n * den:  # lo = max(lo, n1/den)
+            lo_n, lo_d = n1, den
+        if n2 * hi_d < hi_n * den:  # hi = min(hi, n2/den)
+            hi_n, hi_d = n2, den
+    return Fraction(lo_n, lo_d) if lo_n * hi_d < hi_n * lo_d else None
 
 
 @lru_cache(maxsize=1 << 16)
@@ -160,9 +166,16 @@ def base_sight(view: BoardView, observer: UnitId, target: UnitId) -> Sight:
 
 
 def sight_to_square(view: BoardView, observer: UnitId, square: Square) -> bool:
-    """LoS from a unit to a square (ability targeting)."""
+    """LoS from a unit to a square (ability targeting). Memoized per state."""
+    memo = view.memo.setdefault("sight_to_square", {})
+    key = (observer, square)
+    if key in memo:
+        return memo[key]
     a = view.state.unit(observer)
     if square in a.squares:
-        return True
-    occupant = view.occupant(square)
-    return best_line(view, a.squares, (square,), observer, occupant).los
+        seen = True
+    else:
+        occupant = view.occupant(square)
+        seen = best_line(view, a.squares, (square,), observer, occupant).los
+    memo[key] = seen
+    return seen

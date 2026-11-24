@@ -19,8 +19,9 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
   - calls `ready()` and `expand()`;
   - sets the header and background colours;
   - calls `disableVerticalSwipes()`, so dragging the chart doesn't close the app;
-  - exposes the native back button and the raw `initData` (verified server-side later,
-    rule 11).
+  - exposes the native back button and the raw `initData`. Telegram sign-in is **dropped
+    for now** (CLAUDE.md rule 11), so `initData` is unused. The adapter stays for the
+    theme, viewport and back button.
 
   In a normal browser everything is a no-op. Telegram also sets the `--tg-*` CSS variables
   (theme, safe-area insets) that `styles.css` uses.
@@ -40,6 +41,22 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
   it for free.
 - **Production hosting:** FastAPI serves `client/dist` at `/` when the directory exists, so
   there's one origin and no CORS.
+- **Screens** (planned; see [architecture › Lobby](architecture.md#lobby)): a `screen`
+  signal drives `login → lobby → galaxy | combat`. Menus are Preact overlays; the galaxy
+  and combat screens are Phaser scenes.
+  - **Login/register:** forms calling `/api/auth/login` and `/api/auth/register`.
+  - **Lobby:** the username, logout, **"Galaxy chart"** (opens `GalaxyScene`) and
+    **"Combat demo"** (a disabled "coming soon" placeholder until the combat gateway
+    ships).
+- **Auth on the client** (planned):
+  - The access token lives **in memory only** (a module in `src/net/`), never in
+    `localStorage`. The refresh token is an httpOnly cookie the client never sees.
+  - On start, the client calls `POST /api/auth/refresh`. Success shows the lobby; failure
+    shows login.
+  - It refreshes about a minute before expiry. On a `401`, it refreshes once and retries
+    once.
+  - The WebSocket client sends the token in `hello` and `auth.refresh`, never in the URL
+    (see [protocol](protocol.md#websocket)).
 
 ## Layout
 ```
@@ -50,7 +67,7 @@ client/
   src/
     main.tsx          platform → i18n → overlay → Phaser → load data
     platform/         Telegram adapter
-    net/              HTTP (later: WebSocket client)
+    net/              HTTP (later: auth token holder, WebSocket client)
     state/            signals (galaxy, selection)
     i18n/             t(), locale detection
     game/config.ts    Phaser game config (pixelArt, roundPixels, Scale.RESIZE, 2 touches)

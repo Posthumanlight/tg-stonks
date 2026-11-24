@@ -10,6 +10,7 @@ autogenerate in `migrations/env.py`. Dropping them at any time loses nothing.
 from typing import Any
 
 from sqlalchemy import (
+    text,
     JSON,
     BigInteger,
     Boolean,
@@ -292,6 +293,13 @@ async def write_snapshot(
 
     connection = await session.connection()
     await connection.run_sync(snapshot_metadata.create_all)
+    if connection.dialect.name == "postgresql":
+        # Keep Supabase's public REST API away from these tables too (see the
+        # auth_and_rls migration); the server's `postgres` role is unaffected.
+        for table in SNAPSHOT_TABLES:
+            await session.execute(
+                text(f"ALTER TABLE {table.name} ENABLE ROW LEVEL SECURITY")
+            )
     for table in SNAPSHOT_TABLES:
         await session.execute(table.delete())
     for table in reversed(SNAPSHOT_TABLES):

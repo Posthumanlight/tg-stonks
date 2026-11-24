@@ -4,7 +4,6 @@ import random
 
 import pytest
 
-from app.combat.ground.actions import Attack, Move, Skip, UseAbility, Wait
 from app.combat.ground.engine import (
     COMBAT_RULES_VERSION,
     CombatRecord,
@@ -14,6 +13,7 @@ from app.combat.ground.engine import (
     start_combat,
 )
 from app.combat.ground.events import log_hash
+from app.combat.ground.policy import random_action
 from app.combat.ground.setup import CombatSetup, UnitSetup
 from app.combat.ground.board import Board
 
@@ -38,35 +38,7 @@ def play(ruleset, seed: int, chooser_seed: int, max_actions: int = 400):
     state, log = start_combat(ruleset, SETUP, rng, strict=True)
     actions = []
     while state.outcome is None and len(actions) < max_actions:
-        options = legal_actions(ruleset, state)
-        choices: list = [Attack(a.weapon, a.target) for a in options.attacks] * 3
-        for ability in options.abilities:
-            if ability.target_units:
-                choices.append(
-                    UseAbility(ability.ability, target_unit=ability.target_units[0])
-                )
-            else:
-                choices.append(
-                    UseAbility(
-                        ability.ability, target_square=ability.target_squares[-1]
-                    )
-                )
-        if options.moves:
-            me = state.unit(options.unit)
-            enemies = [u for u in state.living() if u.side != me.side]
-            best = min(
-                options.moves,
-                key=lambda m: min(
-                    abs(m.destination[0] - e.origin[0])
-                    + abs(m.destination[1] - e.origin[1])
-                    for e in enemies
-                ),
-            )
-            choices += [Move(best.path)] * 2
-        if options.can_wait:
-            choices.append(Wait())
-        choices.append(Skip())
-        action = chooser.choice(choices)
+        action = random_action(state, legal_actions(ruleset, state), chooser)
         actions.append(action)
         state, events = apply_action(ruleset, state, action, rng, strict=True)
         log += events

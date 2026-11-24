@@ -20,8 +20,10 @@ async def session() -> AsyncIterator[AsyncSession]:
 
 
 async def test_insert_assigns_user_id(session: AsyncSession) -> None:
-    first = User(username="alice", hashed_password="hash-a")
-    second = User(username="bob", hashed_password="hash-b")
+    first = User(
+        username="alice", username_normalized="alice", hashed_password="hash-a"
+    )
+    second = User(username="bob", username_normalized="bob", hashed_password="hash-b")
     session.add_all([first, second])
     await session.commit()
 
@@ -34,10 +36,14 @@ async def test_insert_assigns_user_id(session: AsyncSession) -> None:
 
 
 async def test_username_is_unique(session: AsyncSession) -> None:
-    session.add(User(username="alice", hashed_password="hash-a"))
+    session.add(
+        User(username="alice", username_normalized="alice", hashed_password="hash-a")
+    )
     await session.commit()
 
-    session.add(User(username="alice", hashed_password="hash-b"))
+    session.add(
+        User(username="Alice", username_normalized="alice", hashed_password="hash-b")
+    )
     with pytest.raises(IntegrityError):
         await session.commit()
 

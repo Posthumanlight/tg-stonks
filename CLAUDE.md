@@ -14,6 +14,10 @@ Design lives in `docs/` — read the relevant doc before touching a system:
 
 ## Stack
 - Server: Python 3.12, FastAPI, WebSockets, SQLAlchemy 2.0 (async) + Alembic, Pydantic v2
+- Auth: joserfc (Authlib project; JWT), argon2-cffi (passwords); Authlib OAuth client reserved
+  for social login later
+- Processes: one gateway (uvicorn, `--workers 1`) + combat worker processes it spawns
+  (see [architecture](docs/architecture.md))
 - DB: Supabase Postgres (asyncpg driver); SQLite (aiosqlite) for tests.
 - Client: TypeScript (strict), Phaser 4 (scenes), Preact + @preact/signals (DOM overlays), Vite
 - Tooling: Poetry, black, pytest · npm, vitest
@@ -28,7 +32,9 @@ Server (from the repo root — `pyproject.toml` and `alembic.ini` live there, co
 - `poetry run python server/app/cli/snapshot_world.py` — dump the whole generated galaxy
   into debug `gen_*` tables for browsing (never read by the game; safe to drop)
 - Config in repo-root `.env`: `DATABASE_URL` (Supabase via Session pooler), `WORLD_SEED`
-  (never change it once the world exists).
+  (never change it once the world exists), `AUTH_SECRET`, `COMBAT_WORKERS` — full list in
+  [architecture](docs/architecture.md#configuration-and-secrets).
+- Never run uvicorn with `--workers > 1`: the gateway must hold every connection.
 
 Client (from `client/`; run uvicorn alongside — Vite proxies `/api` and `/ws` to :8000):
 - `npm i` · `npm run dev` · `npm run build` · `npm test` · `npm run typecheck`
@@ -42,6 +48,9 @@ Client (from `client/`; run uvicorn alongside — Vite proxies `/api` and `/ws` 
 server/app/
   api/          HTTP routes (auth, account, static data) — thin
   ws/           WebSocket gateway: auth, decode intents, push deltas — thin
+  auth/         passwords (argon2id), JWT access tokens, refresh tokens, dependencies
+  services/     gateway-side orchestration (combat router, backends)
+  workers/      combat worker processes: IPC, supervisor, combat host/instances
   sim/          game loop, world state, systems (movement, production, NPC AI) — NO I/O
   world/        procedural generation (pure, seeded)
   economy/      recipes, markets, ledger
@@ -67,10 +76,12 @@ docs/         design docs
    `(world_seed, coords, GENERATOR_VERSION)`. Persist only player-caused changes, never
    generated data. Changing a generator's output requires bumping its version and a
    migration note in `docs/world-gen.md`.
-5. **Real-time loop.** One asyncio loop with fixed ticks: fast tick (movement/visibility) and
-   slow tick (production, NPC economy). Authoritative state is in memory; persistence is
-   batched write-behind — never write to the DB per player action in the hot path.
-   Exception: economic transactions (trades, transfers) commit atomically.
+5. **Processes and loops.** One gateway process holds every client connection, auth and
+   routing — it never runs game rules or CPU-heavy work on its event loop (argon2 goes to a
+   thread pool). Game state lives in worker processes (combat workers now; world-sim
+   workers later with fast/slow ticks), each with its own asyncio loop. Authoritative state
+   is in memory; persistence is batched write-behind — never write to the DB per player
+   action in the hot path. Exception: account and economic transactions commit atomically.
 6. **Interest management.** Clients subscribe to their current sector/planet; send only
    deltas for that area. Never broadcast world-wide state.
 7. **Combat is instanced.** A combat is a self-contained turn-based state machine spawned from
@@ -83,8 +94,11 @@ docs/         design docs
 10. **DB portability.** No SQLite-only SQL, no dialect-specific raw queries; use SQLAlchemy
     Core/ORM. Alembic runs with `render_as_batch=True`. DB chosen via `DATABASE_URL`.
     SQLite runs in WAL mode. No Supabase client SDK in game code — Postgres via SQLAlchemy only.
-11. **Auth.** Telegram Mini App: verify `initData` HMAC server-side. Web: own login.
-    Both exchange for the same server-issued session token. Never trust unverified Telegram data.
+11. **Auth.** Own username + password login (argon2id). The server issues short-lived JWT
+    access tokens (memory only on the client, Bearer / WS `hello`) and a rotating refresh
+    token in an httpOnly `__Host-` cookie with reuse detection. Telegram initData sign-in is
+    dropped for now; new sign-in methods plug in via an `identities` table (see
+    [architecture](docs/architecture.md#authentication)).
 
 ## Protocol
 - Pydantic models in `server/app/protocol/` are the single source of truth; TS types are

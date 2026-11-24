@@ -55,3 +55,9 @@ export function t(key: MessageKey, params?: Params): string {
 export function tKey(key: string, params?: Params): string {
   return translate(LOCALES, locale.value, key, params);
 }
+
+/** An error `reason_key` from the server, or a generic message for unknown keys. */
+export function tError(reasonKey: string): string {
+  const known = reasonKey in LOCALES[DEFAULT_LOCALE];
+  return tKey(known ? reasonKey : "error.generic");
+}

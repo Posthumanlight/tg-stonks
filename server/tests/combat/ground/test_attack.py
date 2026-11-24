@@ -8,7 +8,7 @@ from app.combat.ground.dice import Dice
 from app.combat.ground.engine import IllegalAction, apply_action, legal_actions
 from app.combat.ground.ruleset import ruleset_from_raw
 
-from .helpers import activate, resolver, start
+from .helpers import activate, board, resolver, start
 
 
 def test_no_spill_and_wounded_model_first(ruleset) -> None:
@@ -108,6 +108,34 @@ def test_damage_table_applies(ruleset) -> None:
             )[0]
         )
     assert set(totals) == {1}  # 4 × 25% = 1 exactly
+
+
+def test_redirected_hits_use_the_victims_armor_and_cover(ruleset) -> None:
+    # bodyguard (heavy team, in forest) next to the warden (open ground)
+    rows = ["." * 12] * 12
+    rows[2] = "...f........"
+    units = [
+        ("warden", 0, (2, 2)),
+        ("heavy_team", 0, (3, 2)),
+        ("line_troopers", 1, (2, 7)),
+    ]
+    state, _, _ = start(ruleset, units, board_=board(rows))
+    res = resolver(ruleset, state)
+    assert not res.cover_for(2, 0)  # the warden has no cover from the shooter
+    resolve_hits(
+        res,
+        2,
+        0,
+        3,
+        Dice.parse("4"),
+        "small_arms",
+        True,
+        cover=res.cover_for(2, 0),
+        weapon=None,
+    )
+    hits = [e for e in res.events if e.kind == "hit_resolved"]
+    # 4 × small arms vs heavy (50%) × area cover (½) = 1; against the warden it would be 4
+    assert [(e.target, e.damage, e.cover) for e in hits] == [(1, 1, True)] * 3
 
 
 def test_engaged_units_can_shoot(ruleset) -> None:

@@ -2,15 +2,17 @@
 
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Request, Response
 
+from app.auth.dependencies import current_user
 from app.persistence.worldgen_repo import Pins
 from app.protocol.world import ClusterView, GalaxyView, LinkView, StarView
 from app.world import versions
 from app.world.canonical import output_hash
 from app.world.generator import WorldGenerator
 
-router = APIRouter(prefix="/world")
+# Game data is for signed-in players only (docs/architecture.md "Authorization").
+router = APIRouter(prefix="/world", dependencies=[Depends(current_user)])
 
 
 @dataclass(frozen=True, slots=True)

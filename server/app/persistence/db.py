@@ -48,8 +48,13 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
-def create_engine(url: str) -> AsyncEngine:
-    return create_async_engine(normalize_db_url(url), pool_pre_ping=True)
+def create_engine(url: str, *, pool_size: int | None = None) -> AsyncEngine:
+    """One engine per process (gateway and each worker size their own pool)."""
+    url = normalize_db_url(url)
+    options: dict = {"pool_pre_ping": True}
+    if pool_size is not None and not url.startswith("sqlite"):
+        options.update(pool_size=pool_size, max_overflow=0)
+    return create_async_engine(url, **options)
 
 
 _engine: AsyncEngine | None = None
@@ -60,7 +65,10 @@ def get_engine() -> AsyncEngine:
     """Process-wide engine, created lazily from `DATABASE_URL`."""
     global _engine
     if _engine is None:
-        _engine = create_engine(get_settings().database_url)
+        settings = get_settings()
+        _engine = create_engine(
+            settings.database_url, pool_size=settings.db_pool_gateway
+        )
     return _engine
 
 

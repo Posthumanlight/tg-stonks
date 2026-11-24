@@ -1,5 +1,12 @@
-"""FastAPI entry point: `poetry run uvicorn app.main:app --app-dir server --reload`."""
+"""FastAPI entry point (the gateway): `poetry run uvicorn app.main:app --app-dir server`.
 
+This is the composition root: every service is built and wired here, so the rest of
+the code receives its dependencies instead of constructing them.
+"""
+
+import asyncio
+import contextlib
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,44 +15,104 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api import health, world
-from app.config import REPO_ROOT, get_settings
+from app.api import auth, health, world
+from app.auth.cookies import CookiePolicy
+from app.auth.dependencies import AuthComponents, AuthLimits
+from app.auth.passwords import Argon2Hasher, PasswordHasher
+from app.auth.refresh import RefreshService
+from app.auth.service import AuthService
+from app.auth.tokens import TokenService
+from app.config import REPO_ROOT, Settings, get_settings
 from app.content.worldgen import load_worldgen_content
 from app.persistence import worldgen_repo as repo
+from app.persistence.auth_repo import RefreshStore, UserStore
 from app.persistence.db import dispose_engine, get_sessionmaker
+from app.shared.clock import Clock, SystemClock
+from app.shared.errors import install_error_handlers
 from app.world_bootstrap import bootstrap_world
 
 CLIENT_DIST = REPO_ROOT / "client" / "dist"
+REFRESH_CLEANUP_INTERVAL_S = 24 * 3600
+
+log = logging.getLogger(__name__)
+
+
+def build_auth(
+    settings: Settings,
+    sessions: async_sessionmaker[AsyncSession],
+    clock: Clock,
+    hasher: PasswordHasher,
+) -> AuthComponents:
+    tokens = TokenService(
+        settings.require_auth_secret(),
+        previous_secret=settings.previous_auth_secret(),
+        ttl_s=settings.auth_access_ttl_s,
+        clock=clock,
+    )
+    refresh = RefreshService(
+        RefreshStore(sessions), ttl_s=settings.auth_refresh_ttl_s, clock=clock
+    )
+    return AuthComponents(
+        service=AuthService(UserStore(sessions), refresh, tokens, hasher),
+        tokens=tokens,
+        limits=AuthLimits.defaults(clock),
+        cookie=CookiePolicy(
+            secure=settings.auth_cookie_secure, max_age=settings.auth_refresh_ttl_s
+        ),
+    )
+
+
+async def _cleanup_refresh_tokens(auth: AuthComponents) -> None:
+    while True:
+        await asyncio.sleep(REFRESH_CLEANUP_INTERVAL_S)
+        try:
+            removed = await auth.service.refresh_tokens.cleanup()
+            log.info("removed %d expired refresh tokens", removed)
+        except Exception:  # keep the loop alive; the next run retries
+            log.exception("refresh-token cleanup failed")
 
 
 def create_app(
     *,
+    settings: Settings | None = None,
     sessionmaker: async_sessionmaker[AsyncSession] | None = None,
     world_seed: int | None = None,
     client_dist: Path | None = CLIENT_DIST,
+    clock: Clock | None = None,
+    password_hasher: PasswordHasher | None = None,
 ) -> FastAPI:
-    """Build the app. Arguments override settings (tests pass their own DB and seed)."""
+    """Build the gateway app. Arguments override settings and defaults (tests inject
+    their own DB, seed, clock and cheap hasher)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        content = load_worldgen_content()
-        seed = world_seed
-        if seed is None:
-            seed = get_settings().require_world_seed()
-        async with (sessionmaker or get_sessionmaker())() as session:
-            generator = await bootstrap_world(session, seed, content)
+        config = settings or get_settings()
+        sessions = sessionmaker or get_sessionmaker()
+        seed = world_seed if world_seed is not None else config.require_world_seed()
+
+        app.state.auth = build_auth(
+            config, sessions, clock or SystemClock(), password_hasher or Argon2Hasher()
+        )
+        async with sessions() as session:
+            generator = await bootstrap_world(session, seed, load_worldgen_content())
             pins = await repo.load_pins(session)
         app.state.generator = generator
         app.state.galaxy = world.cache_galaxy(world.build_galaxy_view(generator, pins))
+
+        cleanup = asyncio.create_task(_cleanup_refresh_tokens(app.state.auth))
         try:
             yield
         finally:
+            cleanup.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cleanup
             if sessionmaker is None:
                 await dispose_engine()
 
     app = FastAPI(title="tg-stonks", lifespan=lifespan)
-    app.include_router(health.router, prefix="/api")
-    app.include_router(world.router, prefix="/api")
+    install_error_handlers(app)
+    for module in (health, auth, world):
+        app.include_router(module.router, prefix="/api")
     # The built client (npm run build), same origin as /api. Mounted last so it never
     # shadows API routes. In dev, Vite serves the client and proxies /api here.
     if client_dist is not None and client_dist.is_dir():

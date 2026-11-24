@@ -29,6 +29,8 @@ class BoardView:
     def __init__(self, ruleset: "CombatRuleset", state: CombatState) -> None:
         self.ruleset = ruleset
         self.state = state
+        # Per-state memo for pure geometry results (the state never changes under it).
+        self.memo: dict[str, dict] = {}
 
     @cached_property
     def _overlays(self) -> dict[Square, list[str]]:
