@@ -28,6 +28,23 @@ for (const def of Object.values(defs)) {
   for (const prop of Object.values(def.properties ?? {})) delete prop.title;
 }
 
+// Pydantic emits tuples in the JSON Schema 2020 form (`prefixItems`), which
+// json-schema-to-typescript doesn't understand (it would emit [unknown, unknown]).
+// Rewrite them to the draft-07 tuple form (`items: [...]`) it does support.
+function draft07Tuples(node) {
+  if (Array.isArray(node)) {
+    node.forEach(draft07Tuples);
+  } else if (node && typeof node === "object") {
+    if (Array.isArray(node.prefixItems)) {
+      node.items = node.prefixItems;
+      node.additionalItems = false;
+      delete node.prefixItems;
+    }
+    Object.values(node).forEach(draft07Tuples);
+  }
+}
+draft07Tuples(defs);
+
 const names = Object.keys(defs).sort();
 const root = {
   title: "ProtocolModels",

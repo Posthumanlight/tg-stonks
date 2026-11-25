@@ -37,8 +37,8 @@ and versioning. Server processes and the lifecycle of connections and combats ar
 | `POST /api/auth/logout-all` | Bearer | `204` | revokes every session of the user |
 | `GET /api/auth/me` | Bearer | `{user}` | |
 | `GET /api/world/galaxy` | Bearer | `GalaxyView` | built once at startup; strong `ETag`, `Cache-Control: no-cache`, `304` on `If-None-Match` |
-| `POST /api/combats/demo` | Bearer | `{combat_id}` | **planned**: creates or returns the user's hotseat demo combat |
-| `GET /api/combats` | Bearer | `[{combat_id, mode, status, …}]` | **planned**: the user's active combats |
+| `POST /api/combats/demo` | Bearer | `CombatCreated {combat_id}` | creates the user's hotseat demo combat, or returns the active one |
+| `GET /api/combats` | Bearer | `[CombatSummaryView {combat_id, mode, status, created_at}]` | the user's combats, newest first |
 
 HTTP errors use the body `{reason_key, detail?}` with a fitting status (400, 401, 403,
 404, 409, 429 + `Retry-After`, 503).
@@ -64,36 +64,55 @@ Every frame is one JSON object:
    before the access token expires.
 4. **Reconnect:** on close, reconnect with backoff and re-subscribe with `last_seq`.
 
-### Messages (v1)
+### Messages (`PROTOCOL_VERSION` 2)
+The models are in `server/app/protocol/ws.py` (messages) and
+`server/app/protocol/combat.py` (combat payloads).
+
 | Direction | Type | Payload | Notes |
 |---|---|---|---|
-| C → S | `hello` | `{protocol_version, access_token}` | must be first |
-| C → S | `auth.refresh` | `{access_token}` | replaces the connection's token |
-| C → S | `ping` | `{}` | application-level keepalive (optional) |
-| C → S | `combat.subscribe` | `{combat_id, last_seq?}` | needs a seat. Replies with missed `combat.events` or a `combat.snapshot` |
+| C → S | `hello` | `{protocol_version, access_token}` | must be first, within 5 s |
+| C → S | `auth.refresh` | `{access_token}` | replaces the connection's token (same user only) |
+| C → S | `ping` | — | keepalive; answered with `pong` (send one every ~25 s) |
+| C → S | `combat.subscribe` | `{combat_id, last_seq?}` | needs a seat. Pushes the missed `combat.events` (when `last_seq` is close enough) or a `combat.snapshot`, then `ack` |
 | C → S | `combat.unsubscribe` | `{combat_id}` | |
-| C → S | `combat.action` | `{combat_id, action}` | `action` is one of `move {path}`, `attack {weapon, target}`, `ability {ability, target_unit?, target_square?}`, `wait`, `skip` |
-| S → C | `welcome` | `{user, protocol_version}` | |
-| S → C | `ack` | `{id}` | the request was accepted |
-| S → C | `error` | `{id?, reason_key, detail?}` | `id` present when it answers a request |
-| S → C | `pong` | `{}` | |
-| S → C | `combat.snapshot` | `CombatView` | full state, including `last_seq` |
-| S → C | `combat.events` | `{combat_id, from_seq, events[]}` | engine log events, each with its `seq` |
-| S → C | `combat.legal` | `{combat_id, legal}` | the active unit's legal actions (moves, attacks, abilities, can_wait) |
+| C → S | `combat.action` | `{combat_id, intent}` | `intent` is one of `move {to}`, `attack {weapon, target}`, `ability {ability, target_unit?, target_square?}`, `wait`, `skip`. `move` names only the destination: the server uses the path it showed in `legal` |
+| S → C | `welcome` | `{user_id, role, protocol_version}` | |
+| S → C | `ack` | `id` (no payload) | the request was accepted; for an action, it arrives **after** that action's `combat.events` |
+| S → C | `error` | `{reason_key, detail?}` + `id` | `id` is set when it answers a request |
+| S → C | `pong` | `id` | |
+| S → C | `combat.snapshot` | `CombatSnapshot {board, view, legal}` | the only message carrying the board (terrain never changes during a fight) |
+| S → C | `combat.events` | `CombatUpdate {combat_id, from_seq, events[], view, legal}` | pushed to every subscriber after each action. `view` is the new state, so clients render from it and never re-implement rules; `events` (each with its `seq`) are for animation and the log |
 
-Combat-specific error reasons include `combat.not_your_turn`, `combat.unavailable`
-(the worker is restarting; retry) and `combat.not_found`, plus every engine reason key
-(`move.forbidden.*`, `attack.forbidden.*`, `ability.forbidden.*`, …).
+Combat error reasons:
+- `combat.not_your_turn`;
+- `combat.not_a_participant`;
+- `combat.not_found`;
+- `combat.finished`;
+- `combat.unavailable`: the worker is restarting; retry;
+- `combat.bad_setup`;
+- every engine reason key (`move.forbidden.*`, `attack.forbidden.*`,
+  `ability.forbidden.*`, …).
+
+Gateway errors:
+- `protocol.version_mismatch` (sent before closing with 4426);
+- `ws.already_authenticated`;
+- `auth.forbidden`.
 
 ### Close codes
-4400 malformed or unknown message · 4401 auth failed or token expired · 4408 no `hello`
-in time · 4426 protocol version mismatch (reload) · 4429 rate limited · 1011 server
-error or outbound queue overflow.
+- **4400:** a malformed or unknown message.
+- **4401:** auth failed, or the token expired without an `auth.refresh`.
+- **4408:** no `hello` in time.
+- **4426:** protocol version mismatch (reload).
+- **4429:** rate limited.
+- **1001:** idle for 60 s.
+- **1011:** server error or outbound queue overflow.
 
 ### Limits
 - 20 messages/s per connection, burst 40; excess closes with 4429.
-- The outbound queue holds 256 messages per connection.
-- The server pings every 20 s and drops connections idle for 60 s.
+- The outbound queue holds 256 messages per connection. A client that can't keep up is
+  dropped, and it resyncs on reconnect.
+- uvicorn sends WebSocket pings every 20 s, and the gateway closes connections that
+  sent nothing for 60 s.
 
 ## Open questions
 - Binary encoding (MessagePack) once message volume justifies it.

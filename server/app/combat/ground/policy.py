@@ -12,20 +12,27 @@ from app.combat.ground.engine import LegalActions
 from app.combat.ground.state import CombatState
 
 
-def random_action(state: CombatState, options: LegalActions, chooser: random.Random) -> Action:
+def random_action(
+    state: CombatState, options: LegalActions, chooser: random.Random
+) -> Action:
     choices: list[Action] = [Attack(a.weapon, a.target) for a in options.attacks] * 3
     for ability in options.abilities:
         if ability.target_units:
-            choices.append(UseAbility(ability.ability, target_unit=ability.target_units[0]))
+            choices.append(
+                UseAbility(ability.ability, target_unit=ability.target_units[0])
+            )
         else:
-            choices.append(UseAbility(ability.ability, target_square=ability.target_squares[-1]))
+            choices.append(
+                UseAbility(ability.ability, target_square=ability.target_squares[-1])
+            )
     if options.moves:
         me = state.unit(options.unit)
         enemies = [u for u in state.living() if u.side != me.side]
         best = min(
             options.moves,
             key=lambda m: min(
-                abs(m.destination[0] - e.origin[0]) + abs(m.destination[1] - e.origin[1])
+                abs(m.destination[0] - e.origin[0])
+                + abs(m.destination[1] - e.origin[1])
                 for e in enemies
             ),
         )

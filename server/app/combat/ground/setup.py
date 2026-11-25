@@ -1,10 +1,13 @@
 """Combat setup: the board and the deployed units, validated before round 1."""
 
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.combat.ground.board import Board, Square
-from app.combat.ground.state import GroupState, UnitState, UnitId
 from app.combat.ground.ruleset import CombatRuleset
+from app.combat.ground.state import GroupState, UnitId, UnitState
+from app.content.combat import DEFAULT_CONTENT_DIR, DemoBattle
 
 
 class SetupError(ValueError):
@@ -79,6 +82,53 @@ def validate_board(ruleset: CombatRuleset, board: Board) -> None:
         raise SetupError(f"unknown terrain {sorted(unknown)}")
 
 
+def validate_setup(
+    ruleset: CombatRuleset, setup: CombatSetup
+) -> tuple[tuple[int, ...], tuple[UnitState, ...]]:
+    """Check board, sides, unit sizes and placement. Returns (sides, built units)."""
+    validate_board(ruleset, setup.board)
+    sides = tuple(sorted({u.side for u in setup.units}))
+    if len(sides) < 2:
+        raise SetupError("a combat needs at least two sides")
+    units = tuple(
+        build_unit(ruleset, uid, u.unit_type, u.side, u.origin, u.models)
+        for uid, u in enumerate(setup.units)
+    )
+    board, terrain = setup.board, ruleset.content.terrain
+    taken: set[Square] = set()
+    for unit in units:
+        for square in unit.squares:
+            if (
+                not board.in_bounds(square)
+                or not terrain[board.terrain_at(square)].passable
+                or square in taken
+            ):
+                raise SetupError(
+                    f"unit {unit.uid} ({unit.unit_type}) can't be placed at {unit.origin}"
+                )
+            taken.add(square)
+    return sides, units
+
+
 def default_board(ruleset: CombatRuleset, terrain: str = "open") -> Board:
     size = ruleset.rules.default_board
     return Board.filled(size.width, size.height, terrain)
+
+
+DEMO_FILE = DEFAULT_CONTENT_DIR / "demo.toml"
+
+
+def load_demo_setup(ruleset: CombatRuleset, path: Path = DEMO_FILE) -> CombatSetup:
+    """The fixed hotseat demo battle, validated like any combat setup."""
+    with open(path, "rb") as f:
+        demo = DemoBattle.model_validate(tomllib.load(f))
+    try:
+        board = Board.from_rows(demo.rows, demo.legend)
+    except KeyError as exc:
+        raise SetupError(f"demo.toml: unknown legend character {exc}") from exc
+    setup = CombatSetup(
+        board,
+        tuple(UnitSetup(u.type, u.side, u.origin, u.models) for u in demo.units),
+    )
+    validate_setup(ruleset, setup)
+    return setup

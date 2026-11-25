@@ -369,5 +369,32 @@ def content_hash(raw: dict[str, Any]) -> str:
     return hashlib.sha256(data.encode()).hexdigest()
 
 
+class DemoUnit(_Model):
+    type: str
+    side: int = Field(ge=0)
+    origin: tuple[int, int]
+    models: int | None = Field(default=None, ge=1)
+
+
+class DemoBattle(_Model):
+    """`content/combat/demo.toml`: the fixed hotseat demo (board rows + armies)."""
+
+    width: int = Field(ge=1)
+    height: int = Field(ge=1)
+    legend: dict[str, str]
+    rows: tuple[str, ...]
+    units: tuple[DemoUnit, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def _shape(self) -> "DemoBattle":
+        if len(self.rows) != self.height or any(
+            len(r) != self.width for r in self.rows
+        ):
+            raise ValueError("rows must be `height` strings of `width` characters")
+        if any(len(key) != 1 for key in self.legend):
+            raise ValueError("legend keys must be single characters")
+        return self
+
+
 def parse_combat_content(raw: dict[str, Any]) -> CombatContent:
     return CombatContent.model_validate(raw)

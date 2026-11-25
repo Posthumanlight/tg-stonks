@@ -7,6 +7,7 @@ from app.combat.ground.state import OverlayState
 from app.combat.ground.view import BoardView
 
 from .helpers import board, start
+from .los_reference import reference_crossed
 
 
 def test_crossed_squares_basics() -> None:
@@ -24,6 +25,25 @@ def test_crossing_is_symmetric() -> None:
         a = (rnd.randrange(32), rnd.randrange(32))
         b = (rnd.randrange(32), rnd.randrange(32))
         assert set(crossed_squares(a, b)) == set(crossed_squares(b, a))
+
+
+def test_grid_walk_matches_the_exact_oracle() -> None:
+    """The fast integer walk equals brute-force interior tests, square for square and
+    in order, on every line between squares of a 12×12 board and random long lines."""
+    pairs = [
+        ((ax, ay), (bx, by))
+        for ax in range(12)
+        for ay in range(12)
+        for bx in range(12)
+        for by in range(12)
+    ]
+    rnd = random.Random(11)
+    pairs += [
+        ((rnd.randrange(64), rnd.randrange(64)), (rnd.randrange(64), rnd.randrange(64)))
+        for _ in range(500)
+    ]
+    for a, b in pairs:
+        assert crossed_squares(a, b) == reference_crossed(a, b), (a, b)
 
 
 def test_sight_is_symmetric_with_terrain_and_units(ruleset) -> None:

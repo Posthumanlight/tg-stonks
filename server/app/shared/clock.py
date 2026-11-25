@@ -33,6 +33,9 @@ class FakeClock:
     def monotonic(self) -> float:
         return self._monotonic
 
-    def advance(self, seconds: float) -> None:
+    def advance(self, seconds: float, *, monotonic: bool = True) -> None:
+        """Move time forward. `monotonic=False` moves only the wall clock (e.g. token
+        expiry without tripping idle timeouts)."""
         self._now += seconds
-        self._monotonic += seconds
+        if monotonic:
+            self._monotonic += seconds

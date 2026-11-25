@@ -314,14 +314,22 @@ combat worker.
 
 ### Gateway side: `CombatRouter`
 - **Placement:** a new combat goes to the **least-loaded** worker. Load is the
-  instance count, reported by each worker in `load_report`.
+  instance count, reported by each worker in `load_report` (every 5 s).
+  - A placement counts **as soon as it's decided** (`CombatBackend.loads()` contract);
+    the next report replaces the estimate. Without this, every combat created between
+    two reports went to the same worker (the load test saw 160–184 fights on six
+    workers and none on three).
   - The mapping `combat_id → worker_slot` is kept in gateway memory.
   - It is also written to `combats.worker_slot`, so recovery knows where each combat
     lives.
 - **Forwarding:** each intent goes to its worker as `{user_id, request_id, combat_id,
   action}`.
 - **Fan-out:** the router keeps the subscriptions (`combat_id → connections`). Each
-  `pushed` message from a worker is sent to every subscribed connection. Each `reply`
+  `pushed` message from a worker is sent to every subscribed connection.
+  - The worker serializes each `CombatUpdate` **once** (`model_dump_json`). `pushed`
+    carries it as JSON text, and the gateway splices that text into the WebSocket frame
+    without parsing it. Parsing it into dicts and re-encoding it cost the gateway a
+    measurable share of its single core. Each `reply`
   goes only to the connection that sent the request.
 
 ### Worker side: `CombatHost` and `CombatInstance`
@@ -332,22 +340,32 @@ A `CombatInstance` holds:
   engine's `CombatRecord`.
 - **An event log** with a sequence number (`seq`) per event, kept in memory for
   resyncs.
-- **Concurrency and access:** an `asyncio.Lock` that serializes actions, and the seat
-  map.
+- **Access:** the seat map.
+- **No lock.** An intent is handled synchronously, with no `await` between reading and
+  writing the state, so two intents can never interleave on the worker's event loop.
 - **Status:** `active | finished | abandoned | aborted`.
+
+`CombatInstance` (`workers/combat_instance.py`) has no I/O. `CombatHost`
+(`workers/combat_host.py`) does the persistence and publishing. Updates leave through
+an injected `publish` callback: IPC in a worker process, a direct call in
+`InProcessBackend`.
 
 **Intent flow:**
 1. **Gateway:** authenticate the connection, rate-limit it, look up the worker, forward
    the intent.
 2. **Worker:** check the seat. The user must hold the side of the active unit, or get
    `error {combat.not_your_turn}`.
-3. **Worker:** take the lock, then call `engine.apply_action(ruleset, state, action,
-   rng)`. It is pure, synchronous and fast (see [Scalability](#scalability-and-capacity-model)).
+3. **Worker:** translate the intent into an engine action.
+   - `move {to}` names only a destination. The worker takes the path from the legal
+     moves it showed the client, so paths are never sent over the wire.
+   - Then it calls `engine.apply_action(ruleset, state, action, rng)`. That call is pure,
+     synchronous and fast (see [Scalability](#scalability-and-capacity-model)).
 4. **Worker:** append the action to the record and the events to the log with new seqs,
    then queue the action for write-behind.
 5. **Worker → gateway:**
-   - `pushed {combat_id, from_seq, events, legal}`;
-   - `reply {request_id, ack}` for the sender.
+   - `pushed {combat_id, update}`, where `update` is a `CombatUpdate`: the new events,
+     the post-action `CombatView` and the next `CombatLegal`;
+   - `reply {request_id, ok}` for the sender.
 6. **Gateway:** fan out the push to the subscribers.
 
 **On `IllegalAction`:** the worker replies `error {request_id, reason_key}` and pushes
@@ -358,13 +376,23 @@ list stays replayable.
 creation and stored in the record. The pure engine never draws its own randomness.
 
 ### Views (client-facing protocol models)
-- **`CombatView`** (snapshot): combat id, board (size and terrain), units (type, side,
-  origin, groups' alive counts, wounded model, statuses, reactions), overlays, round,
-  active unit and its budget, queues, outcome, and the last `seq`.
-- **`CombatEvents`:** `{combat_id, from_seq, events[]}`. These are the engine's
-  log events (`events.event_to_dict`), each with its `seq`.
-- **`CombatLegal`:** the active unit's `LegalActions`, mapped to protocol models (moves
-  with paths and opportunity-attack warnings, attacks with cover, ability targets).
+All of these are in `server/app/protocol/combat.py`, with pure converters from engine
+state.
+- **`CombatView`:** combat id, units (type, side, origin, groups' alive counts, wounded
+  model, statuses, reactions), overlays, round, active unit and its budget, queues,
+  outcome, and `seq` (the resync point).
+- **`BoardView`:** size and terrain. It is sent **only in a `CombatSnapshot`**,
+  `{board, view, legal}`, because terrain never changes during a fight.
+- **`CombatUpdate`:** pushed after every action as `{combat_id, from_seq, events[],
+  view, legal}`.
+  - The events are the engine's log events, each with its `seq`. They are for animation
+    and the log.
+  - The client renders state from `view`, so **no rules logic runs in TypeScript**.
+- **`CombatLegal`:** the active unit's legal actions.
+  - Moves are destinations, each with its cost and opportunity-attack warnings.
+  - Attacks come with a cover flag, and ability targets are included.
+- **Intents** (`CombatIntent`): `move {to}`, `attack {weapon, target}`,
+  `ability {ability, target_unit?, target_square?}`, `wait`, `skip`.
 - **No fog of war in v1:** every subscriber sees the whole combat.
 
 ### Timers
@@ -395,12 +423,21 @@ records stay in the DB.
   - **Immediate:** creation and finishing write the `combats` row.
   - **Write-behind:** each worker batches its pending `combat_actions` and flushes every
     1–2 s, at combat end, and on shutdown.
-- **Recovery:** this runs at gateway start (for every slot) and when a single worker
-  restarts (for its slot).
-  1. Load the `active` combats.
-  2. Rebuild each one with `engine.replay(ruleset, record)`.
-  3. If the record's `content_hash` or `rules_version` differs from the running server,
-     replay can't be exact. The combat is marked `aborted` with a reason.
+- **Recovery is lazy.** At worker start (gateway start, or a single worker's
+  restart):
+  1. One `UPDATE` marks the slot's `active` combats `aborted` when their
+     `content_hash` or `rules_version` differs from the running server, because replay
+     can't be exact. Nothing else is loaded, so start-up time doesn't depend on how many
+     fights were in flight.
+  2. A combat is rebuilt (`engine.resume` over its record) the **first time it's
+     touched** (subscribe or intent). Concurrent first touches share one load. A record
+     that fails to replay is marked `aborted`.
+  - **Why lazy:** eager recovery of ~90 long fights per worker took longer than the
+    60 s readiness timeout during the load test, and the server refused to start.
+    Lazy recovery also leaves abandoned fights out of memory until someone comes back.
+  - **Cost:** replay time grows with a fight's length (about 3–5 ms per action), and it
+    runs on the worker's loop. A mass reconnect after a restart replays everything at
+    once; see Open questions (checkpoints).
 
 ---
 
@@ -417,7 +454,7 @@ records stay in the DB.
   | Direction | Messages |
   |---|---|
   | gateway → worker | `hello_ack`, `create {combat_id, owner, setup, seed?}`, `intent {request_id, user_id, combat_id, action}`, `snapshot_request {combat_id, last_seq?}`, `close {combat_id}`, `ping`, `drain` |
-  | worker → gateway | `hello {slot, boot_token}`, `reply {request_id, ok, reason_key?}`, `pushed {combat_id, from_seq, events, legal}`, `snapshot {combat_id, view}`, `load_report {instances}`, `pong` |
+  | worker → gateway | `hello {slot, boot_token}`, `reply {request_id, ok, reason_key?}`, `pushed {combat_id, update}` (`update`: `CombatUpdate` as JSON text, forwarded unparsed), `load_report {instances}`, `pong` |
 
 - **Authentication:** the listener binds to localhost or a Unix socket only. A worker's
   `hello` must carry the per-boot random `boot_token` that the gateway passed at spawn.
@@ -469,6 +506,9 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
   - The client resyncs on reconnect. A slow client never holds back others.
 - **Heartbeat:** the server sends a WebSocket ping every 20 s and closes connections
   idle for 60 s.
+- **Watchdog:** a single gateway task checks every connection twice a second for token
+  expiry (no `auth.refresh` in time, 4401) and idleness (1001). One task for all
+  sockets replaced a timer task per connection.
 - **Rate limit:** a per-connection token bucket, 20 messages/s with a burst of 40.
   Excess closes with 4429.
 - **Several tabs per user** are allowed. Every subscribed connection receives the
@@ -486,33 +526,92 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 **Target:** **1,000 concurrent players** on one machine.
 
 ### Why the engine can't run in the gateway
-- **Measured cost:** the ground-combat engine takes about **18–24 ms per action**,
-  including the legal-action recompute after each action.
+- **Measured cost before optimization:** the ground-combat engine took about
+  **18–24 ms per action**, including the legal-action recompute after each action.
+- **After optimization:** **mean 3.45 ms, p50 3.4 ms, p95 7.1 ms, p99 8.5 ms** per turn
+  on 32×32 (`server/app/cli/bench_combat.py`, 20 seeded fights, dev box). The fixes:
+  - one legal computation per state, memoized by state identity;
+  - incremental opportunity-attack previews over the pathfinding tree;
+  - a precomputed movement box;
+  - an exact integer line walk for LoS (checked against a brute-force oracle);
+  - per-board terrain grids;
+  - hook dispatch that skips events nobody listens to.
+
+  The rules didn't change: the golden-fight hash is identical.
 - **Expected load:** 1,000 players mostly in turn-based fights, each acting every
   3–10 s, make **100–300 actions/s**.
-- **The result:** that is 2–6 s of CPU per second, while one Python process uses one
-  core (the GIL). Running inline, every engine call would also delay every socket on the
-  loop.
+- **The result:** before optimization that was 2–6 s of CPU per second. Even now it is
+  about 1 s/s, while one Python process uses one core (the GIL). Running inline, every
+  engine call would also delay every socket on the loop.
 
 ### Budgets
 | Item | Budget | How |
 |---|---|---|
 | Combat actions | **300 actions/s** peak sustained | spread over combat workers |
-| Engine | `apply_action` + legal recompute **≤ 5 ms p95** on 32×32 | engine work: cache `LegalActions` per state; cheaper square-target enumeration for area abilities; don't compute legal actions twice per action. A benchmark test guards it |
-| Per worker | ~200 actions/s at 5 ms | 4 workers ≈ 800 actions/s, plenty of headroom |
+| Engine | `apply_action` + legal recompute **≤ 8 ms p95** on 32×32 (measured 7.1 ms; the original 5 ms target was revised) | `bench_combat.py` on a dev box; `test_perf.py` guards regressions with a generous CI bound. Next levers if needed: compute area-ability target squares only when the ability is selected (they are about 20% of a slow turn), or a compiled pathfinder |
+| Per worker | ~290 actions/s at the 3.45 ms mean | 3 workers ≈ 870 actions/s, about 3× headroom over the target |
 | Intent → events | **p95 < 100 ms** end to end | gateway does routing and JSON only |
 | Gateway | 1,000 sockets, ≤ 20 msg/s each worst case | no engine calls and no argon2 on its loop; bounded queues |
 | DB | `DB_POOL_GATEWAY + N × DB_POOL_WORKER` connections | combat writes batched; auth writes are rare |
 | Memory | a few hundred KB per combat, including its log | 1,000 combats ≈ a few hundred MB |
 
 ### Load test
-- **The tool:** `server/app/cli/loadtest.py` runs asynchronous bot clients. They
-  register, log in, open demo combats and play random legal actions over real
-  WebSockets.
-- **What it reports:** actions/s, p50/p95/p99 latency from intent to events, and error
-  rates.
+- **The tool:** `server/app/cli/loadtest.py` runs asynchronous bot clients.
+  - Each bot opens its demo combat over HTTP, connects to `/ws` and plays random legal
+    actions with a randomized think time. It starts a new demo when one ends.
+  - **Sign-in is not tested.** Per-IP auth rate limits make 1,000 sign-ups from one host
+    impossible by design, and argon2 isn't what's measured. So the tool creates its bot
+    users (`lt_<n>`, or `--user-prefix`) directly in `DATABASE_URL` and mints access
+    tokens with `AUTH_SECRET`. Point both at a scratch DB.
+  - Options: `--bots`, `--duration`, `--ramp`, `--think-ms`, `--procs` (load-generator
+    processes), `--user-prefix` (a fresh set of fights), `--json`.
+- **What it reports:** actions/s and intent → `combat.events` latency (p50/p95/p99/max)
+  over the steady window after the ramp, `combat.events` frame sizes, finished combats,
+  and errors by reason.
 - **Its role:** it is **the gate** before raising player caps, and it runs before every
   release that touches the engine or the gateway.
+
+#### Results (2026-11-25)
+**Setup.** Everything ran on one dev box: an Intel i5-10400T (6 cores, 12 threads,
+2.0 GHz) with 7.7 GB RAM, Windows 11 and Python 3.13.
+- The gateway, 11 workers and the load generator shared the machine.
+- The DB was a scratch SQLite file. Docker wasn't running, and the live Supabase DB is
+  off limits for load tests.
+- Each run used 1,000 bots with a 3 s mean think time, a 30 s ramp and 120 s measured.
+
+| Run | Actions/s | p50 | p95 | p99 | Errors |
+|---|---|---|---|---|---|
+| Before the fixes below | 333.6 | 14.7 ms | 231 ms | 708 ms | 0 |
+| + raw JSON forwarding, one watchdog | 337.8 | 9.8 ms | **45 ms** | 125 ms | 0 |
+| repeat (placement still skewed) | 335.6 | 12.8 ms | 143 ms | 392 ms | 0 |
+| + placement counted at decision | 337.9 | 9.7 ms | **46 ms** | 174 ms | 0 |
+| repeat, with 1,000 earlier fights still resident | 337.0 | 10.1 ms | 115 ms | 394 ms | 0 |
+
+- **Throughput: met.** About 337 actions/s were sustained against the 300/s budget,
+  with all 1,000 sockets connected and no errors. `combat.events` frames averaged
+  4.7 KB (p95 8.9 KB).
+- **Latency: met on fresh load, but sensitive.** p95 was 45–46 ms with fresh fights
+  and 115 ms with twice as many fights resident in the workers. The causes, in order:
+  1. **CPU contention.** The load generator shares 6 cores with 12 server processes.
+     Splitting it into 4 processes (`--procs 4`) made p95 *worse* (300 ms).
+  2. **Worker GC pauses.** A full collection over a worker holding 180 fights (60k
+     events) takes about 43 ms, and the pause grows with resident fights.
+  3. **Windows' Proactor loop.** In the gateway profile, socket sends were the largest
+     cost (about 0.36 ms per send).
+- **Gateway CPU** fell from 77% to 43% of one core at the same rate, from raw JSON
+  forwarding and the single watchdog.
+- **Restart storm.** Resuming 1,000 long fights at once (every bot's first touch
+  replays its record) pushed p99 to 2.2 s while workers replayed. See Open questions.
+- **Fixes found by the load test:**
+  - raw JSON push forwarding;
+  - a single watchdog task;
+  - placement counted at decision time;
+  - lazy recovery, after eager recovery blocked start-up past the 60 s readiness
+    timeout.
+- **Still to do:** run on the target environment before raising caps:
+  - Linux with uvloop;
+  - Postgres;
+  - the load generator on a separate machine.
 
 ### Beyond one machine (not needed for 1k)
 - Several gateways would need cross-gateway pub/sub (for example Redis) for fan-out,
@@ -564,8 +663,8 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 
 | Failure | Effect | Recovery | Data at risk |
 |---|---|---|---|
-| Worker crash | its combats are unavailable for a few seconds; in-flight intents get `error {combat.unavailable}` | the supervisor restarts the worker; it replays its `active` combats; subscribers get `combat.snapshot` | actions since the last flush (≤ 2 s) |
-| Gateway crash | every connection drops; workers lose their parent and exit | the process manager restarts the gateway; it respawns the workers, which recover their combats; clients reconnect and resync | actions since the last flush |
+| Worker crash | its combats are unavailable for a few seconds; in-flight intents get `error {combat.unavailable}` | the supervisor restarts the worker; each combat is replayed on its next subscribe or intent; subscribers get `combat.snapshot` | actions since the last flush (≤ 2 s) |
+| Gateway crash | every connection drops; workers lose their parent and exit | the process manager restarts the gateway; it respawns the workers (ready in seconds; combats replay lazily); clients reconnect and resync | actions since the last flush |
 | DB unavailable | logins and refreshes fail (`503`); combats keep running in memory | write-behind retries with backoff and buffers in memory | everything unflushed, if a crash happens during the outage |
 | Content or rules changed between restarts | affected combats can't be replayed exactly | marked `aborted` with a reason | those combats |
 
@@ -604,7 +703,7 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
   3. Kill a worker mid-fight.
   4. Assert that recovery by replay reproduces the live state, and that subscribers get a
      snapshot.
-- **Engine:** a performance benchmark that guards the 5 ms budget.
+- **Engine:** a performance benchmark (`bench_combat.py`) and a guard test (`test_perf.py`) for the 8 ms p95 budget.
 - **Load test** (manual or nightly), as above.
 
 ---
@@ -614,7 +713,7 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
    endpoints and dependencies.
 2. **Client login/register and the lobby:** galaxy button wired, combat-demo
    placeholder.
-3. **Engine performance work** to meet the 5 ms budget.
+3. **Engine performance work** (done: p95 7.1 ms, mean 3.45 ms).
 4. **Combat workers:** IPC, supervisor, `CombatHost`/`CombatInstance`, persistence and
    recovery, `content/combat/demo.toml`, `/api/combats`.
 5. **WebSocket gateway:** protocol messages and codegen.
@@ -632,4 +731,11 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 - Scaling beyond one machine (Redis pub/sub between several gateways, remote workers).
 - Hosting and deployment (process manager, TLS termination, backups).
 - Metrics and observability (structured logs, request ids, latency histograms).
+- **Combat checkpoints.** Replay cost grows with a fight's length, so a mass reconnect
+  after a restart is slow. The fix is to persist a periodic state snapshot (for example
+  every 50 actions) and replay only the tail. It needs a state codec and a
+  rules-version guard.
+- **Worker GC tuning.** Pauses grow with resident fights (about 43 ms per full
+  collection at 180 fights). Options: raise the GC thresholds, `gc.freeze()` after
+  loading, or slimmer event logs (trimming events older than the catch-up window).
 - Bringing back Telegram sign-in, and adding social login via Authlib.

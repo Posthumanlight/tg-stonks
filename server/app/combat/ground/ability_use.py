@@ -183,7 +183,12 @@ def legal_targets(
         if not hooked:
             return True
         with res.sandbox():
-            return _casting_hooks_allow(res, uid, bound.ability_id, target_unit, target_square) is None
+            return (
+                _casting_hooks_allow(
+                    res, uid, bound.ability_id, target_unit, target_square
+                )
+                is None
+            )
 
     state = res.state
     if targeting.type == "square":

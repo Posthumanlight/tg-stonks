@@ -4,16 +4,133 @@
  * Registry of every protocol model (codegen root; not a message).
  */
 export interface ProtocolModels {
+  AbilityIntent: AbilityIntent;
+  AbilityOptionView: AbilityOptionView;
+  AckMessage: AckMessage;
+  ActionMessage: ActionMessage;
+  ActionPayload: ActionPayload;
+  ActiveView: ActiveView;
+  AttackIntent: AttackIntent;
+  AttackOptionView: AttackOptionView;
+  AuthRefreshMessage: AuthRefreshMessage;
+  AuthRefreshPayload: AuthRefreshPayload;
+  BoardView: BoardView;
   ClusterView: ClusterView;
+  CombatCreated: CombatCreated;
+  CombatEvent: CombatEvent;
+  CombatEventsMessage: CombatEventsMessage;
+  CombatLegal: CombatLegal;
+  CombatSnapshot: CombatSnapshot;
+  CombatSnapshotMessage: CombatSnapshotMessage;
+  CombatSummaryView: CombatSummaryView;
+  CombatUpdate: CombatUpdate;
+  CombatView: CombatView;
   ErrorBody: ErrorBody;
+  ErrorMessage: ErrorMessage;
+  ErrorPayload: ErrorPayload;
   GalaxyView: GalaxyView;
+  GroupView: GroupView;
   HealthView: HealthView;
+  HelloMessage: HelloMessage;
+  HelloPayload: HelloPayload;
   LinkView: LinkView;
   LoginRequest: LoginRequest;
+  MoveIntent: MoveIntent;
+  MoveOptionView: MoveOptionView;
+  OutcomeView: OutcomeView;
+  OverlayView: OverlayView;
+  PingMessage: PingMessage;
+  PongMessage: PongMessage;
   RegisterRequest: RegisterRequest;
+  SkipIntent: SkipIntent;
   StarView: StarView;
+  StatusView: StatusView;
+  SubscribeMessage: SubscribeMessage;
+  SubscribePayload: SubscribePayload;
   TokenResponse: TokenResponse;
+  UnitView: UnitView;
+  UnsubscribeMessage: UnsubscribeMessage;
+  UnsubscribePayload: UnsubscribePayload;
   UserView: UserView;
+  WaitIntent: WaitIntent;
+  WelcomeMessage: WelcomeMessage;
+  WelcomePayload: WelcomePayload;
+}
+export interface AbilityIntent {
+  ability: string;
+  target_square?: [number, number] | null;
+  target_unit?: number | null;
+  type: "ability";
+}
+export interface AbilityOptionView {
+  ability: string;
+  ap_cost: number;
+  target_squares: [number, number][];
+  target_units: number[];
+}
+export interface AckMessage {
+  id: string;
+  type: "ack";
+}
+export interface ActionMessage {
+  id?: string | null;
+  payload: ActionPayload;
+  type: "combat.action";
+}
+export interface ActionPayload {
+  combat_id: string;
+  intent: MoveIntent | AttackIntent | AbilityIntent | WaitIntent | SkipIntent;
+}
+export interface MoveIntent {
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  to: [number, number];
+  type: "move";
+}
+export interface AttackIntent {
+  target: number;
+  type: "attack";
+  weapon: string;
+}
+export interface WaitIntent {
+  type: "wait";
+}
+export interface SkipIntent {
+  type: "skip";
+}
+export interface ActiveView {
+  acted: boolean;
+  ap_left: number;
+  attacked: boolean;
+  moved: boolean;
+  movement_left: number;
+  movement_locked: boolean;
+  uid: number;
+  weapons_used: string[];
+}
+export interface AttackOptionView {
+  ap_cost: number;
+  cover: boolean;
+  target: number;
+  weapon: string;
+}
+export interface AuthRefreshMessage {
+  id?: string | null;
+  payload: AuthRefreshPayload;
+  type: "auth.refresh";
+}
+export interface AuthRefreshPayload {
+  access_token: string;
+}
+/**
+ * Sent once with a snapshot: terrain never changes during a combat.
+ */
+export interface BoardView {
+  height: number;
+  terrain: string[];
+  width: number;
 }
 export interface ClusterView {
   code: string;
@@ -23,10 +140,127 @@ export interface ClusterView {
   x: number;
   y: number;
 }
+export interface CombatCreated {
+  combat_id: string;
+}
+export interface CombatEvent {
+  data: {
+    [k: string]: unknown | undefined;
+  };
+  seq: number;
+  type: string;
+}
+export interface CombatEventsMessage {
+  payload: CombatUpdate;
+  type: "combat.events";
+}
+/**
+ * Pushed after every action: what happened, the new state, what's legal next.
+ */
+export interface CombatUpdate {
+  combat_id: string;
+  events: CombatEvent[];
+  from_seq: number;
+  legal: CombatLegal | null;
+  view: CombatView;
+}
+export interface CombatLegal {
+  abilities: AbilityOptionView[];
+  attacks: AttackOptionView[];
+  can_wait: boolean;
+  moves: MoveOptionView[];
+  unit: number;
+}
+export interface MoveOptionView {
+  cost: number;
+  provokes: number[];
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  to: [number, number];
+}
+export interface CombatView {
+  active: ActiveView | null;
+  combat_id: string;
+  outcome: OutcomeView | null;
+  overlays: OverlayView[];
+  queue: number[];
+  round: number;
+  round_order: number[];
+  seq: number;
+  units: UnitView[];
+  wait_queue: number[];
+}
+export interface OutcomeView {
+  draw: boolean;
+  reason: string;
+  winners: number[];
+}
+export interface OverlayView {
+  overlay: string;
+  rounds_left: number;
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  square: [number, number];
+}
+export interface UnitView {
+  groups: GroupView[];
+  models: number;
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  origin: [number, number];
+  reactions: number;
+  side: number;
+  size: number;
+  statuses: StatusView[];
+  uid: number;
+  unit_type: string;
+  wounded: [number, number] | null;
+}
+export interface GroupView {
+  alive: number;
+  hp: number;
+  initial: number;
+  role: string;
+}
+export interface StatusView {
+  rounds_left: number;
+  stacks: number;
+  status: string;
+}
+export interface CombatSnapshot {
+  board: BoardView;
+  legal: CombatLegal | null;
+  view: CombatView;
+}
+export interface CombatSnapshotMessage {
+  payload: CombatSnapshot;
+  type: "combat.snapshot";
+}
+export interface CombatSummaryView {
+  combat_id: string;
+  created_at: string;
+  mode: string;
+  status: string;
+}
 /**
  * Every HTTP error: an i18n reason key and an optional developer detail.
  */
 export interface ErrorBody {
+  detail?: string | null;
+  reason_key: string;
+}
+export interface ErrorMessage {
+  id?: string | null;
+  payload: ErrorPayload;
+  type: "error";
+}
+export interface ErrorPayload {
   detail?: string | null;
   reason_key: string;
 }
@@ -65,13 +299,39 @@ export interface HealthView {
   protocol_version: number;
   status: "ok";
 }
+export interface HelloMessage {
+  id?: string | null;
+  payload: HelloPayload;
+  type: "hello";
+}
+export interface HelloPayload {
+  access_token: string;
+  protocol_version: number;
+}
 export interface LoginRequest {
   password: string;
   username: string;
 }
+export interface PingMessage {
+  id?: string | null;
+  type: "ping";
+}
+export interface PongMessage {
+  id?: string | null;
+  type: "pong";
+}
 export interface RegisterRequest {
   password: string;
   username: string;
+}
+export interface SubscribeMessage {
+  id?: string | null;
+  payload: SubscribePayload;
+  type: "combat.subscribe";
+}
+export interface SubscribePayload {
+  combat_id: string;
+  last_seq?: number | null;
 }
 export interface TokenResponse {
   access_token: string;
@@ -83,5 +343,22 @@ export interface UserView {
   user_id: number;
   username: string;
 }
+export interface UnsubscribeMessage {
+  id?: string | null;
+  payload: UnsubscribePayload;
+  type: "combat.unsubscribe";
+}
+export interface UnsubscribePayload {
+  combat_id: string;
+}
+export interface WelcomeMessage {
+  payload: WelcomePayload;
+  type: "welcome";
+}
+export interface WelcomePayload {
+  protocol_version: number;
+  role: string;
+  user_id: number;
+}
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;

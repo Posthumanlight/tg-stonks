@@ -31,9 +31,19 @@ Server (from the repo root — `pyproject.toml` and `alembic.ini` live there, co
 - `poetry run python server/app/cli/init_world.py` — create/check the world row (idempotent)
 - `poetry run python server/app/cli/snapshot_world.py` — dump the whole generated galaxy
   into debug `gen_*` tables for browsing (never read by the game; safe to drop)
+- `poetry run python server/app/cli/bench_combat.py` — engine benchmark (per-turn p50/p95/p99)
+- `poetry run python server/app/cli/loadtest.py --bots 1000 --duration 120 --think-ms 3000`
+  — bots play demo combats over HTTP + `/ws` against a running server (seeds `lt_*` users
+  in `DATABASE_URL` and mints tokens with `AUTH_SECRET`: point both at a scratch DB, never
+  the live one)
+- `poetry run pytest -m "not slow"` skips the real-process worker tests; `-m perf` runs the
+  engine perf guard only
 - Config in repo-root `.env`: `DATABASE_URL` (Supabase via Session pooler), `WORLD_SEED`
-  (never change it once the world exists), `AUTH_SECRET`, `COMBAT_WORKERS` — full list in
+  (never change it once the world exists), `AUTH_SECRET` (≥ 32 bytes; **the server won't
+  start without it**), `COMBAT_WORKERS` (default: CPU cores − 1) — full list in
   [architecture](docs/architecture.md#configuration-and-secrets).
+- uvicorn spawns the combat workers itself (also with `--reload`); their logs are prefixed
+  `[worker N]`. Env vars override `.env` (e.g. a scratch `DATABASE_URL`).
 - Never run uvicorn with `--workers > 1`: the gateway must hold every connection.
 
 Client (from `client/`; run uvicorn alongside — Vite proxies `/api` and `/ws` to :8000):
@@ -59,7 +69,7 @@ server/app/
   protocol/     Pydantic message schemas (source of truth for client types)
 server/migrations/  Alembic
 server/tests/       mirrors server/app/
-client/src/   scenes/ (Phaser) · net/ · ui/ · state/ · i18n/ · protocol/ (generated)
+client/src/   scenes/ (Phaser) · combat/ (pure combat UI logic) · net/ (http, ws) · ui/ · state/ · i18n/ · protocol/ (generated)
 content/      TOML game data: items, recipes, hulls, modules, unit types, factions
 locales/      en.json, ua.json
 docs/         design docs

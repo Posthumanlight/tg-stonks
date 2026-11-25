@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # --- processes and pools ----------------------------------------------------------
     combat_workers: int | None = Field(default=None, ge=1)  # None: CPU cores - 1
+    combat_idle_timeout_s: int = Field(default=24 * 3600, ge=60)
+    combat_flush_interval_s: float = Field(default=1.0, gt=0)
     db_pool_gateway: int = Field(default=5, ge=1)
     db_pool_worker: int = Field(default=2, ge=1)
 

@@ -10,6 +10,7 @@ is reproducible from `CombatRecord` (setup, seed, actions) via `replay`.
 
 import random
 from collections import OrderedDict
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 from app.combat.ground import events as ev
@@ -32,7 +33,7 @@ from app.combat.ground.movement import (
 )
 from app.combat.ground.resolver import IllegalAction, Resolver
 from app.combat.ground.ruleset import CombatRuleset
-from app.combat.ground.setup import CombatSetup, SetupError, build_unit, validate_board
+from app.combat.ground.setup import CombatSetup, SetupError, validate_setup
 from app.combat.ground.state import CombatState, UnitId
 
 # Bump when a rules or ability-function change alters fight outcomes (replays).
@@ -50,6 +51,7 @@ __all__ = [
     "apply_action",
     "legal_actions",
     "replay",
+    "resume",
     "start_combat",
 ]
 
@@ -104,25 +106,9 @@ def start_combat(
     *,
     strict: bool = False,
 ) -> tuple[CombatState, list[ev.Event]]:
-    validate_board(ruleset, setup.board)
-    sides = sorted({u.side for u in setup.units})
-    if len(sides) < 2:
-        raise SetupError("a combat needs at least two sides")
-    units = tuple(
-        build_unit(ruleset, uid, u.unit_type, u.side, u.origin, u.models)
-        for uid, u in enumerate(setup.units)
-    )
-    state = CombatState(board=setup.board, side_order=tuple(sides), units=units)
+    sides, units = validate_setup(ruleset, setup)
+    state = CombatState(board=setup.board, side_order=sides, units=units)
     res = Resolver(ruleset, state, rng, strict=strict)
-    view = res.view
-    taken: set[Square] = set()
-    for unit in units:
-        for square in unit.squares:
-            if not view.props(square).passable or square in taken:
-                raise SetupError(
-                    f"unit {unit.uid} ({unit.unit_type}) can't be placed at {unit.origin}"
-                )
-            taken.add(square)
 
     order = list(sides)
     rng.shuffle(order)
@@ -191,7 +177,9 @@ def _legal(res: Resolver) -> LegalActions:
         for target in enemies:
             with res.sandbox():
                 legal = check_attack(res, uid, weapon, target) is None
-                cover = legal and definition.mode == "ranged" and res.cover_for(uid, target)
+                cover = (
+                    legal and definition.mode == "ranged" and res.cover_for(uid, target)
+                )
             if legal:
                 attacks.append(AttackOption(weapon, target, definition.ap_cost, cover))
 
@@ -335,12 +323,28 @@ def replay(
         raise ValueError("combat record was made with different content")
     if record.rules_version != COMBAT_RULES_VERSION:
         raise ValueError("combat record was made with a different rules version")
-    rng = random.Random(record.seed)
-    state, log = start_combat(ruleset, record.setup, rng, strict=strict)
-    for action in record.actions:
+    state, log, _ = resume(
+        ruleset, record.setup, record.seed, record.actions, strict=strict
+    )
+    return state, log
+
+
+def resume(
+    ruleset: CombatRuleset,
+    setup: CombatSetup,
+    seed: int,
+    actions: Sequence[Action],
+    *,
+    strict: bool = False,
+) -> tuple[CombatState, list[ev.Event], random.Random]:
+    """Rebuild a combat and hand back its RNG, positioned to continue the fight.
+    Callers check content hash and rules version first (see `replay`)."""
+    rng = random.Random(seed)
+    state, log = start_combat(ruleset, setup, rng, strict=strict)
+    for action in actions:
         state, events = apply_action(ruleset, state, action, rng, strict=strict)
         log.extend(events)
-    return state, log
+    return state, log, rng
 
 
 def unit_distance(state: CombatState, a: UnitId, b: UnitId) -> int:

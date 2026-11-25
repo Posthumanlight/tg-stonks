@@ -4,4 +4,4 @@ Any change here: regenerate (`npm run gen:protocol` in client/), bump PROTOCOL_V
 and update docs/protocol.md.
 """
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2  # v2: auth, combats, WebSocket messages

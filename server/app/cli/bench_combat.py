@@ -39,7 +39,9 @@ BENCH_SETUP = CombatSetup(
 )
 
 
-def turn_timings(ruleset: CombatRuleset, fights: int, max_actions: int = 300) -> list[float]:
+def turn_timings(
+    ruleset: CombatRuleset, fights: int, max_actions: int = 300
+) -> list[float]:
     """Seconds per turn: legal actions as sent to the client + the action itself."""
     timings: list[float] = []
     for seed in range(fights):

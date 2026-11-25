@@ -99,27 +99,38 @@ class _FootprintCache:
     def terrain_ok(self, origin: Square) -> bool:
         ok = self._terrain.get(origin)
         if ok is None:
-            ok = self._terrain[origin] = self.view.terrain_passable(footprint(origin, self.size))
+            ok = self._terrain[origin] = self.view.terrain_passable(
+                footprint(origin, self.size)
+            )
         return ok
 
     def fits(self, origin: Square, ending: bool) -> bool:
         key = (origin, ending)
         ok = self._fits.get(key)
         if ok is None:
-            ok = self._fits[key] = self.view.fits(footprint(origin, self.size), self.uid, ending=ending)
+            ok = self._fits[key] = self.view.fits(
+                footprint(origin, self.size), self.uid, ending=ending
+            )
         return ok
 
     def cost(self, origin: Square) -> int:
         cost = self._cost.get(origin)
         if cost is None:
-            cost = self._cost[origin] = self.view.step_cost(footprint(origin, self.size))
+            cost = self._cost[origin] = self.view.step_cost(
+                footprint(origin, self.size)
+            )
         return cost
 
     def step_ok(self, frm: Square, to: Square) -> bool:
         """Same rule as `step_allowed(ending=False)` for an adjacent step."""
         dx, dy = to[0] - frm[0], to[1] - frm[1]
-        if dx and dy and not (
-            self.terrain_ok((frm[0] + dx, frm[1])) and self.terrain_ok((frm[0], frm[1] + dy))
+        if (
+            dx
+            and dy
+            and not (
+                self.terrain_ok((frm[0] + dx, frm[1]))
+                and self.terrain_ok((frm[0], frm[1] + dy))
+            )
         ):
             return False
         return self.fits(to, False)
@@ -134,30 +145,50 @@ def reachable(view: BoardView, uid: UnitId, budget: int) -> dict[Square, MoveOpt
     state = view.state
     start = state.unit(uid).origin
     cache = _FootprintCache(view, uid)
-    terrain_ok, fits, step_cost = cache.terrain_ok, cache.fits, cache.cost
+    # Every origin reachable within `budget` lies within Chebyshev distance `budget`
+    # (each step moves 1 and costs >= 1): precompute that box once into flat arrays,
+    # so the search loop does index lookups instead of per-step footprint checks.
+    x0, y0 = start[0] - budget, start[1] - budget
+    width = 2 * budget + 1
+    terrain = [False] * (width * width)  # footprint terrain passable (corner rule)
+    transit = [False] * (width * width)  # can pass through (friends allowed)
+    costs = [0] * (width * width)
+    for j in range(width):
+        for i in range(width):
+            origin = (x0 + i, y0 + j)
+            k = j * width + i
+            terrain[k] = cache.terrain_ok(origin)
+            if terrain[k] and cache.fits(origin, False):
+                transit[k] = True
+                costs[k] = cache.cost(origin)
+
     best: dict[Square, int] = {start: 0}
-    best_get = best.get
     previous: dict[Square, Square] = {}
-    heap: list[tuple[int, Square]] = [(0, start)]
+    heap: list[tuple[int, int, int]] = [(0, start[0], start[1])]  # (cost, x, y) order
     pop, push = heapq.heappop, heapq.heappush
     limit = budget + 1
     while heap:
-        cost, square = pop(heap)
-        if cost > best[square]:
+        cost, x, y = pop(heap)
+        if cost > best[(x, y)]:
             continue
-        x, y = square
+        i, j = x - x0, y - y0
         for dx, dy in NEIGHBOURS:
+            ni, nj = i + dx, j + dy
+            if not (0 <= ni < width and 0 <= nj < width):
+                continue  # outside the box: farther than `budget`
+            k = nj * width + ni
+            if not transit[k]:
+                continue
+            # same rule as `step_allowed(ending=False)`: no corner cutting
+            if dx and dy and not (terrain[j * width + ni] and terrain[nj * width + i]):
+                continue
+            new_cost = cost + costs[k]
             nxt = (x + dx, y + dy)
-            # same rule as `step_allowed(ending=False)`: no corner cutting, then fit
-            if dx and dy and not (terrain_ok((x + dx, y)) and terrain_ok((x, y + dy))):
-                continue
-            if not fits(nxt, False):
-                continue
-            new_cost = cost + step_cost(nxt)
-            if new_cost < best_get(nxt, limit):
+            if new_cost < best.get(nxt, limit):
                 best[nxt] = new_cost
-                previous[nxt] = square
-                push(heap, (new_cost, nxt))
+                previous[nxt] = (x, y)
+                push(heap, (new_cost, nxt[0], nxt[1]))
+    fits = cache.fits
 
     provokes = _preview_provokes(view, uid, start, best, previous)
     return {
@@ -191,7 +222,8 @@ def _preview_provokes(
         hit = in_reach.get(key)
         if hit is None:
             hit = in_reach[key] = (
-                footprint_distance(origin, mover.size, enemy.origin, enemy.size) <= REACH
+                footprint_distance(origin, mover.size, enemy.origin, enemy.size)
+                <= REACH
             )
         return hit
 

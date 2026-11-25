@@ -1,6 +1,7 @@
 import { t } from "../i18n";
 import type { Platform } from "../platform/telegram";
 import { screen } from "../state/screen";
+import { CombatScreen } from "./combat/CombatScreen";
 import { GalaxyOverlay } from "./screens/GalaxyOverlay";
 import { Lobby } from "./screens/Lobby";
 import { Login } from "./screens/Login";
@@ -21,6 +22,6 @@ export function App({ platform }: AppProps) {
     case "galaxy":
       return <GalaxyOverlay platform={platform} />;
     case "combat":
-      return null; // phase 6
+      return <CombatScreen />;
   }
 }

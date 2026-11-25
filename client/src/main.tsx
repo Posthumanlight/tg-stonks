@@ -7,6 +7,7 @@ import { hideGame, showGame } from "./game/host";
 import { initI18n, t } from "./i18n";
 import { initPlatform } from "./platform/telegram";
 import { bootstrapAuth, currentUser } from "./state/auth";
+import { combat } from "./state/combat";
 import { ensureGalaxy } from "./state/galaxy";
 import { screen, screenAfterAuth } from "./state/screen";
 import { App } from "./ui/App";
@@ -26,12 +27,17 @@ render(<App platform={platform} />, mustGet("ui"));
 
 // Canvas screens show the Phaser game; DOM-only screens hide it.
 effect(() => {
-  if (screen.value === "galaxy") {
-    showGame(gameRoot);
+  const current = screen.value;
+  if (current === "galaxy") {
+    showGame(gameRoot, "galaxy");
     ensureGalaxy();
+  } else if (current === "combat") {
+    showGame(gameRoot, "combat");
   } else {
     hideGame(gameRoot);
   }
+  // However the combat screen was left (back button, sign-out), drop the fight's socket.
+  if (current !== "combat" && combat.combatId.peek() !== null) combat.leave();
 });
 
 // Signing in or out (including a session that expires) moves between screens.

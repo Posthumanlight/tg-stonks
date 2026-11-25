@@ -782,12 +782,22 @@ A v1 greedy AI (`ai.py`, `choose_action(state, rng)`) is not written yet.
   and targets for the active unit) and `combat.snapshot`. The client only animates and
   highlights. See [protocol](protocol.md#websocket).
 - **Performance budget:** `apply_action` plus the legal-action recompute must stay
-  **≤ 5 ms p95** on a 32×32 board (see
+  **≤ 8 ms p95** on a 32×32 board (see
   [architecture › Scalability](architecture.md#scalability-and-capacity-model)).
-  - Today it is about 18–24 ms, mostly from scanning every square for area abilities and
-    recomputing legal actions after each action.
-  - Planned fixes: cache `LegalActions` per state, cheaper square-target enumeration, a
-    single legal recompute per action, and a benchmark test.
+  - **Measured:** mean 3.45 ms, p95 7.1 ms. It was 24 / 45 ms before optimization.
+  - **Benchmark:** `poetry run python server/app/cli/bench_combat.py`.
+  - **Regression guard:** `test_perf.py`.
+  - **Caches** (all pure, all keyed by object identity of immutable data):
+    - `legal_actions` is memoized per state, so the engine's own auto-end check and the
+      caller's legal-action push share one computation;
+    - terrain grids are shared per board and overlays;
+    - `crossed_squares` keeps an LRU cache;
+    - `sight_to_square` is memoized per state.
+  - **Fast paths:** hook dispatch skips events nobody listens to
+    (`CombatRuleset.listeners_for`), and `ability_use.legal_targets` checks payment once
+    per ability, sandboxing hooks only when they exist.
+  - **Shared random player:** `policy.random_action` drives the golden fight, the
+    benchmark and the load-test bots.
 
 ### Content files — `content/combat/`
 

@@ -1,6 +1,7 @@
 // Typed endpoints. Same origin as the page: Vite proxies /api in dev, FastAPI serves
 // both in production. Static data is revalidated by the browser's HTTP cache via ETag.
 import type {
+  CombatCreated,
   GalaxyView,
   HealthView,
   LoginRequest,
@@ -27,4 +28,9 @@ export const authApi = {
   refresh: (): Promise<TokenResponse> =>
     request<TokenResponse>("POST", "/api/auth/refresh", { auth: false }),
   logout: (): Promise<void> => request<void>("POST", "/api/auth/logout", { auth: false }),
+};
+
+export const combatApi = {
+  /** The user's hotseat demo: created, or the already active one. */
+  createDemo: (): Promise<CombatCreated> => request<CombatCreated>("POST", "/api/combats/demo"),
 };

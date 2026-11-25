@@ -7,7 +7,7 @@ the code receives its dependencies instead of constructing them.
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +15,14 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api import auth, health, world
+from app.api import auth, combats, health, world
+from app.combat.ground.ruleset import CombatRuleset, load_ruleset
+from app.combat.ground.serialize import setup_to_json
+from app.combat.ground.setup import load_demo_setup
+from app.persistence.combat_repo import CombatStore
+from app.services.combat_backend import CombatBackend, ProcessBackend
+from app.services.combat_router import CombatRouter
+from app.workers.supervisor import Supervisor, SupervisorConfig
 from app.auth.cookies import CookiePolicy
 from app.auth.dependencies import AuthComponents, AuthLimits
 from app.auth.passwords import Argon2Hasher, PasswordHasher
@@ -30,6 +37,7 @@ from app.persistence.db import dispose_engine, get_sessionmaker
 from app.shared.clock import Clock, SystemClock
 from app.shared.errors import install_error_handlers
 from app.world_bootstrap import bootstrap_world
+from app.ws import gateway as ws_gateway
 
 CLIENT_DIST = REPO_ROOT / "client" / "dist"
 REFRESH_CLEANUP_INTERVAL_S = 24 * 3600
@@ -62,6 +70,27 @@ def build_auth(
     )
 
 
+BackendFactory = Callable[[Settings, CombatRuleset, CombatStore, Clock], CombatBackend]
+
+
+def process_backend(
+    settings: Settings, ruleset: CombatRuleset, store: CombatStore, clock: Clock
+) -> CombatBackend:
+    """Production: combats in worker processes (docs/architecture.md)."""
+    return ProcessBackend(
+        Supervisor(
+            SupervisorConfig(
+                workers=settings.combat_worker_count,
+                database_url=settings.database_url,
+                pool_size=settings.db_pool_worker,
+                idle_timeout_s=settings.combat_idle_timeout_s,
+                flush_interval_s=settings.combat_flush_interval_s,
+            ),
+            clock,
+        )
+    )
+
+
 async def _cleanup_refresh_tokens(auth: AuthComponents) -> None:
     while True:
         await asyncio.sleep(REFRESH_CLEANUP_INTERVAL_S)
@@ -80,18 +109,21 @@ def create_app(
     client_dist: Path | None = CLIENT_DIST,
     clock: Clock | None = None,
     password_hasher: PasswordHasher | None = None,
+    combat_backend: BackendFactory | None = None,
 ) -> FastAPI:
     """Build the gateway app. Arguments override settings and defaults (tests inject
-    their own DB, seed, clock and cheap hasher)."""
+    their own DB, seed, clock, cheap hasher and in-process combat backend)."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config = settings or get_settings()
         sessions = sessionmaker or get_sessionmaker()
         seed = world_seed if world_seed is not None else config.require_world_seed()
+        time = clock or SystemClock()
+        app.state.clock = time
 
         app.state.auth = build_auth(
-            config, sessions, clock or SystemClock(), password_hasher or Argon2Hasher()
+            config, sessions, time, password_hasher or Argon2Hasher()
         )
         async with sessions() as session:
             generator = await bootstrap_world(session, seed, load_worldgen_content())
@@ -99,20 +131,35 @@ def create_app(
         app.state.generator = generator
         app.state.galaxy = world.cache_galaxy(world.build_galaxy_view(generator, pins))
 
+        ruleset = load_ruleset()
+        store = CombatStore(sessions)
+        backend = (combat_backend or process_backend)(config, ruleset, store, time)
+        await store.fold_slots(backend.slots)
+        await backend.start()
+        app.state.combat_store = store
+        app.state.combat_router = CombatRouter(
+            backend, store, setup_to_json(load_demo_setup(ruleset))
+        )
+
+        app.state.ws_watchdog = ws_gateway.Watchdog(time)
+        watchdog = asyncio.create_task(app.state.ws_watchdog.run())
         cleanup = asyncio.create_task(_cleanup_refresh_tokens(app.state.auth))
         try:
             yield
         finally:
-            cleanup.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await cleanup
+            for task in (cleanup, watchdog):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            await backend.stop()
             if sessionmaker is None:
                 await dispose_engine()
 
     app = FastAPI(title="tg-stonks", lifespan=lifespan)
     install_error_handlers(app)
-    for module in (health, auth, world):
+    for module in (health, auth, world, combats):
         app.include_router(module.router, prefix="/api")
+    app.include_router(ws_gateway.router)  # /ws
     # The built client (npm run build), same origin as /api. Mounted last so it never
     # shadows API routes. In dev, Vite serves the client and proxies /api here.
     if client_dist is not None and client_dist.is_dir():

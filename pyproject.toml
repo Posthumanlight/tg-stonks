@@ -26,6 +26,10 @@ pythonpath = ["server"]
 testpaths = ["server/tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "perf: engine performance guards (generous bounds)",
+    "slow: spawns real worker processes",
+]
 
 
 [build-system]

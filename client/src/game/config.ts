@@ -1,11 +1,14 @@
 import Phaser from "phaser";
 
 import { BootScene } from "../scenes/BootScene";
-import { GalaxyScene } from "../scenes/galaxy/GalaxyScene";
+import { COMBAT_SCENE, CombatScene } from "../scenes/combat/CombatScene";
+import { GALAXY_SCENE, GalaxyScene } from "../scenes/galaxy/GalaxyScene";
 import { CHART_COLOURS } from "../scenes/galaxy/palette";
 
+const SCENES = { boot: BootScene, [GALAXY_SCENE]: GalaxyScene, [COMBAT_SCENE]: CombatScene };
+
 export function startGame(parent: HTMLElement): Phaser.Game {
-  return new Phaser.Game({
+  const game = new Phaser.Game({
     type: Phaser.AUTO,
     parent,
     backgroundColor: CHART_COLOURS.background,
@@ -20,6 +23,9 @@ export function startGame(parent: HTMLElement): Phaser.Game {
     input: {
       activePointers: 2, // two touches for pinch-zoom
     },
-    scene: [BootScene, GalaxyScene],
   });
+  // Registered without autostart (a config `scene` array would start the first one):
+  // game/host.ts starts the entry scene of whichever screen is shown.
+  for (const [key, scene] of Object.entries(SCENES)) game.scene.add(key, scene, false);
+  return game;
 }

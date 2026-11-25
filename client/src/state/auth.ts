@@ -18,9 +18,16 @@ export const currentUser = signal<UserView | null>(null);
 let accessToken: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let inflight: Promise<boolean> | null = null;
+const tokenListeners = new Set<(token: string) => void>();
 
 export function getAccessToken(): string | null {
   return accessToken;
+}
+
+/** Called with each new access token (login or refresh), e.g. to update the WebSocket. */
+export function onTokenChange(listener: (token: string) => void): () => void {
+  tokenListeners.add(listener);
+  return () => tokenListeners.delete(listener);
 }
 
 function schedule(delayS: number): void {
@@ -32,6 +39,7 @@ function apply(session: TokenResponse): void {
   accessToken = session.access_token;
   currentUser.value = session.user;
   schedule(Math.max(MIN_REFRESH_DELAY_S, session.expires_in - REFRESH_MARGIN_S));
+  for (const listener of [...tokenListeners]) listener(session.access_token);
 }
 
 function clear(): void {

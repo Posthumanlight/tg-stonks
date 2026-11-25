@@ -1,0 +1,70 @@
+# The fixed hotseat demo battle (docs/architecture.md "Combat instances").
+# One player controls both sides. Changing this file changes only NEW demo combats:
+# running combats keep the setup stored in their record.
+
+width = 24
+height = 24
+legend = { "." = "open", "#" = "wall", "=" = "low_wall", "r" = "rubble", "f" = "forest", "~" = "deep_water" }
+rows = [
+  "........................",
+  "........................",
+  "...ff..........rr.......",
+  "...ff....==....rr.......",
+  "........................",
+  "..........#.............",
+  "..==......#......ff.....",
+  "..........#......ff.....",
+  "........................",
+  ".....rr.........==......",
+  ".....rr.................",
+  "..........~~~~..........",
+  "..........~~~~..........",
+  ".................rr.....",
+  "......==.........rr.....",
+  "........................",
+  ".....ff......#..........",
+  ".....ff......#......==..",
+  ".............#..........",
+  "........................",
+  ".......rr....==....ff...",
+  ".......rr..........ff...",
+  "........................",
+  "........................",
+]
+
+# Concord (side 0), top-left
+[[units]]
+type = "line_troopers"
+side = 0
+origin = [2, 1]
+
+[[units]]
+type = "heavy_team"
+side = 0
+origin = [6, 1]
+
+[[units]]
+type = "warden"
+side = 0
+origin = [4, 4]
+
+[[units]]
+type = "bastion_walker"
+side = 0
+origin = [0, 4]
+
+# Brood (side 1), bottom-right
+[[units]]
+type = "ravager_swarm"
+side = 1
+origin = [20, 21]
+
+[[units]]
+type = "spitter_brood"
+side = 1
+origin = [17, 22]
+
+[[units]]
+type = "brood_tyrant"
+side = 1
+origin = [21, 18]
