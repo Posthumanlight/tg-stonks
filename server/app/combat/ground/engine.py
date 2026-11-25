@@ -22,7 +22,15 @@ from app.combat.ground.ability_use import (
     resolve_target,
     use_ability,
 )
-from app.combat.ground.actions import Action, Attack, Move, Skip, UseAbility, Wait
+from app.combat.ground.actions import (
+    Action,
+    Attack,
+    Concede,
+    Move,
+    Skip,
+    UseAbility,
+    Wait,
+)
 from app.combat.ground.attack import check_attack, resolve_attack
 from app.combat.ground.board import Square, footprint_distance
 from app.combat.ground.movement import (
@@ -34,7 +42,7 @@ from app.combat.ground.movement import (
 from app.combat.ground.resolver import IllegalAction, Resolver
 from app.combat.ground.ruleset import CombatRuleset
 from app.combat.ground.setup import CombatSetup, SetupError, validate_setup
-from app.combat.ground.state import CombatState, UnitId
+from app.combat.ground.state import CombatState, Outcome, UnitId
 
 # Bump when a rules or ability-function change alters fight outcomes (replays).
 COMBAT_RULES_VERSION = 2  # v2: redirected hits use the victim's armor and cover
@@ -218,9 +226,12 @@ def apply_action(
     *,
     strict: bool = False,
 ) -> tuple[CombatState, list[ev.Event]]:
-    """Apply the active unit's action. Raises `IllegalAction` (state and RNG unchanged)."""
+    """Apply the active unit's action (or a side's `Concede`). Raises `IllegalAction`
+    (state and RNG unchanged)."""
     if state.outcome is not None:
         raise IllegalAction("combat.forbidden.over")
+    if isinstance(action, Concede):
+        return _concede(ruleset, state, action.side, rng)
     if state.active is None:
         raise IllegalAction("combat.forbidden.no_active_unit")
     rng_state = rng.getstate()
@@ -232,6 +243,17 @@ def apply_action(
         rng.setstate(rng_state)
         raise
     _after_action(res)
+    return res.state, res.events
+
+
+def _concede(
+    ruleset: CombatRuleset, state: CombatState, side: int, rng: random.Random
+) -> tuple[CombatState, list[ev.Event]]:
+    if side not in state.side_order:
+        raise IllegalAction("concede.forbidden.side")
+    res = Resolver(ruleset, state, rng)
+    winners = tuple(sorted(s for s in state.side_order if s != side))
+    turn_order.finish(res, Outcome(winners=winners, draw=False, reason="concede"))
     return res.state, res.events
 
 

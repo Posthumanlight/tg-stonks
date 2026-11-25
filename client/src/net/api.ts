@@ -4,11 +4,17 @@ import type {
   BuilderView,
   CombatCreated,
   CombatSummaryView,
+  CreateRoomRequest,
   CustomCombatRequest,
   GalaxyView,
   HealthView,
   LoginRequest,
+  MyRoom,
   RegisterRequest,
+  RoomJoined,
+  RoomList,
+  RoomReady,
+  SideSetup,
   TokenResponse,
   UserView,
 } from "../protocol";
@@ -44,4 +50,31 @@ export const combatApi = {
   list: (): Promise<CombatSummaryView[]> => request<CombatSummaryView[]>("GET", "/api/combats"),
   abandon: (combatId: string): Promise<void> =>
     request<void>("POST", `/api/combats/${encodeURIComponent(combatId)}/abandon`),
+};
+
+const roomPath = (roomId: string, action: string): string =>
+  `/api/rooms/${encodeURIComponent(roomId)}/${action}`;
+
+/** Lobby rooms (docs/protocol.md "Lobby rooms"). Changes are pushed over the WebSocket. */
+export const roomsApi = {
+  /** 409 `room.already_in_room` / `combat.already_active`; 400 `room.bad_*`. */
+  create: (body: CreateRoomRequest): Promise<RoomJoined> =>
+    request<RoomJoined>("POST", "/api/rooms", { body }),
+  search: (query: string, points: number | null): Promise<RoomList> => {
+    const params = new URLSearchParams({ q: query });
+    if (points !== null) params.set("points", String(points));
+    return request<RoomList>("GET", `/api/rooms?${params.toString()}`);
+  },
+  mine: (): Promise<MyRoom> => request<MyRoom>("GET", "/api/rooms/mine"),
+  /** Any room, public or private. 404 `room.not_found`, 429 when guessing. */
+  joinByCode: (code: string): Promise<RoomJoined> =>
+    request<RoomJoined>("POST", "/api/rooms/join", { body: { code } }),
+  /** A public room from search. */
+  join: (roomId: string): Promise<RoomJoined> => request<RoomJoined>("POST", roomPath(roomId, "join")),
+  /** Lock in the army. 400 `setup.*` (detail: SetupErrorRef). `combat_id` when the battle began. */
+  ready: (roomId: string, side: SideSetup): Promise<RoomReady> =>
+    request<RoomReady>("POST", roomPath(roomId, "ready"), { body: side }),
+  unready: (roomId: string): Promise<void> => request<void>("POST", roomPath(roomId, "unready")),
+  leave: (roomId: string): Promise<void> => request<void>("POST", roomPath(roomId, "leave")),
+  kick: (roomId: string): Promise<void> => request<void>("POST", roomPath(roomId, "kick")),
 };

@@ -12,7 +12,9 @@ from app.combat.ground.deployment import (
     Army,
     ArmyUnit,
     BattleMap,
+    army_points,
     deploy,
+    deploy_side,
     load_battle_map,
 )
 from app.combat.ground.serialize import setup_from_json, setup_to_json
@@ -26,8 +28,15 @@ PLACEMENT_CASES = json.loads(
 
 
 @pytest.fixture(scope="module")
-def battle_map(ruleset) -> BattleMap:
+def zoned_map(ruleset) -> BattleMap:
+    """The content map, with its deployment zones (online rooms)."""
     return load_battle_map(ruleset)
+
+
+@pytest.fixture(scope="module")
+def battle_map(zoned_map) -> BattleMap:
+    """The same map without zones (hotseat battles)."""
+    return zoned_map.free()
 
 
 def _with_unit(armies: tuple[Army, ...], side: int, index: int, **changes: Any):
@@ -133,15 +142,46 @@ def test_unit_errors_are_located(
     assert _error(ruleset, battle_map, armies) == (reason, side, index)
 
 
-def test_deployment_zones(ruleset, battle_map) -> None:
-    zoned = replace(
-        battle_map,
-        zones=(Zone(0, (Rect(0, 0, 24, 8),)), Zone(1, (Rect(0, 16, 24, 8),))),
-    )
-    deploy(ruleset, zoned, zoned.defaults)  # the defaults fit these zones
-    armies = _with_unit(zoned.defaults, 0, 2, origin=(4, 10))
-    assert _error(ruleset, zoned, armies) == ("setup.outside_zone", 0, 2)
+def test_deployment_zones(ruleset, zoned_map, battle_map) -> None:
+    assert zoned_map.zones is not None and battle_map.zones is None
+    deploy(ruleset, zoned_map, zoned_map.defaults)  # the defaults fit the zones
+    armies = _with_unit(zoned_map.defaults, 0, 2, origin=(4, 10))
+    assert _error(ruleset, zoned_map, armies) == ("setup.outside_zone", 0, 2)
     deploy(ruleset, battle_map, armies)  # without zones the whole board is allowed
+
+
+def test_points_limit(ruleset, battle_map) -> None:
+    concord, brood = battle_map.defaults
+    assert (army_points(ruleset, concord), army_points(ruleset, brood)) == (440, 365)
+    with pytest.raises(SetupError) as caught:
+        deploy(ruleset, battle_map, battle_map.defaults, points_limit=400)
+    assert (caught.value.reason_key, caught.value.side) == ("setup.over_points", 0)
+    for unlimited in (None, 0):
+        deploy(ruleset, battle_map, battle_map.defaults, points_limit=unlimited)
+
+
+def test_one_side_alone(ruleset, zoned_map) -> None:
+    """An online player's Ready: their army, checked without the opponent's."""
+    concord, brood = zoned_map.defaults
+    deploy_side(ruleset, zoned_map, 0, concord)
+    deploy_side(ruleset, zoned_map, 1, brood, points_limit=365)
+    with pytest.raises(SetupError) as caught:
+        deploy_side(ruleset, zoned_map, 1, concord)  # Concord's spots are side 0's zone
+    assert (caught.value.reason_key, caught.value.side, caught.value.unit) == (
+        "setup.outside_zone",
+        1,
+        0,
+    )
+    stacked = replace(concord, units=(concord.units[0], concord.units[0]))
+    with pytest.raises(SetupError, match="placed") as caught:
+        deploy_side(ruleset, zoned_map, 0, stacked)
+    assert caught.value.reason_key == "setup.overlap"
+    with pytest.raises(SetupError) as caught:
+        deploy_side(ruleset, zoned_map, 0, concord, points_limit=400)
+    assert caught.value.reason_key == "setup.over_points"
+    with pytest.raises(SetupError) as caught:
+        deploy_side(ruleset, zoned_map, 2, concord)
+    assert caught.value.reason_key == "combat.bad_setup"
 
 
 def test_wrong_number_of_sides(ruleset, battle_map) -> None:
@@ -176,3 +216,12 @@ def test_demo_zones_need_one_per_side() -> None:
     }
     with pytest.raises(ValidationError, match="one zone per side"):
         DemoBattle.model_validate(demo)
+
+
+def test_pvp_presets_are_checked(raw) -> None:
+    raw["rules"]["pvp"]["timer_presets"] = [60, 0]  # without the default 45
+    with pytest.raises(ValidationError, match="activation_timer_s"):
+        parse_combat_content(raw)
+    raw["rules"]["pvp"]["timer_presets"] = [45, 45]
+    with pytest.raises(ValidationError, match="distinct"):
+        parse_combat_content(raw)

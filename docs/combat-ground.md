@@ -262,12 +262,18 @@ The unit then takes any sequence of these actions:
 
 - **Auto-end.** The activation ends automatically when no legal action except Skip is
   left.
-- **Timeout.** When the activation timer (`rules.activation_timer_s`) runs out, the engine
-  applies an automatic Skip.
+- **Timeout.** In timed battles (online rooms; the host picks the length), the server
+  shell applies an automatic Skip when the activation timer runs out. The engine has no
+  clock; the Skip is recorded like a player's (see
+  [architecture › Timers](architecture.md#timers)).
 - **End hook.** `activation_ended` hooks run at the end.
 
 ### End of combat
 - A side with no units left loses.
+- **Concede(side):** a side gives up at any time (an online player's surrender). The
+  fight ends, the other sides win, and the reason is `concede`. It takes no turn, rolls
+  no dice, and is recorded and replayed like any action. Adding it changed no existing
+  replay, so `COMBAT_RULES_VERSION` is unchanged.
 - At `rules.round_limit`, the side with more surviving `points` wins. Within
   `rules.draw_margin_percent`, the result is a draw.
 - Objectives (holding squares and so on) are future work.
@@ -276,9 +282,11 @@ The unit then takes any sequence of these actions:
 
 ## Deployment and army building
 
-How a fight's `CombatSetup` is made before round 1. v1 is the **custom battle**: one
-player builds both armies and deploys them on the fixed demo map, then plays the fight in
-hotseat (see [architecture › Custom battle flow](architecture.md#custom-battle-flow)).
+How a fight's `CombatSetup` is made before round 1, on the fixed demo map:
+- **Custom battle (hotseat):** one player builds both armies and plays the fight on one
+  device (see [architecture › Custom battle flow](architecture.md#custom-battle-flow)).
+- **Online room:** each of two players builds and deploys **their own** side in their
+  deployment zone, under the room's points limit (see [lobby-rooms](lobby-rooms.md)).
 
 ### Factions — `content/combat/factions.toml`
 - Each faction has an id and a `name_key` (`faction.<id>.name` in both locale files).
@@ -296,7 +304,7 @@ hotseat (see [architecture › Custom battle flow](architecture.md#custom-battle
 | Unit types | Only the side's faction |
 | Units per side | 1 to `rules.max_units_per_side` (default 12). This is a server-safety cap that protects the engine's time budget, not a balance rule |
 | Models per unit | Any count within the type's `models.min..max`. The `fill` group absorbs the difference, as `build_unit` already does |
-| Points | Each side's total is shown and stored. There is **no cap** in v1 |
+| Points | Each side's total is shown (a unit's points, whatever its model count). No cap in hotseat. An online room may set a **points limit** (`rules.pvp.points_presets`); over it is `setup.over_points` |
 
 ### Placement
 - **Checks** (all existing, from `validate_setup`):
@@ -304,11 +312,17 @@ hotseat (see [architecture › Custom battle flow](architecture.md#custom-battle
   - no two units overlap.
 - **Deployment zones:** when the map defines zones, every footprint square must also be
   inside the side's zone.
-  - **v1 has no zones.** A map without a `[deployment]` section allows the whole board.
+  - **The demo map's zones** are side 0 on rows 0–5 and side 1 on rows 18–23.
+    **Online rooms enforce them; hotseat battles ignore them** (`BattleMap.free()`) and
+    deploy anywhere. A map without a `[deployment]` section allows the whole board in
+    every mode.
   - Zones are rectangles per side in the map file:
     `zones = [{ side = 0, rects = [[x, y, w, h], …] }]`.
-  - Adding zones to a map is **a content change only**: the server check, the builder
-    view and the client highlight already read them.
+  - Changing zones is **a content change only**: the server check, the builder view
+    (`BuilderView.rooms.zones`) and the client highlight already read them.
+- **One side alone** (an online player's Ready): `deployment.deploy_side` checks one
+  army's rules, sizes and placement in its zone without the opponent's. `deploy` checks
+  the pair again when the battle starts.
 - **Deployment index**, the last turn-order tie-break, is the order in `setup.units`:
   side 0's units in the order they were placed, then side 1's.
 
@@ -332,6 +346,7 @@ hotseat (see [architecture › Custom battle flow](architecture.md#custom-battle
 | `setup.blocked_square` | part of the footprint is on impassable terrain |
 | `setup.overlap` | the footprint overlaps another unit |
 | `setup.outside_zone` | part of the footprint is outside the side's deployment zone |
+| `setup.over_points` | the side's points exceed the room's limit (side-wide) |
 
 ### The record
 - **`CombatSetup` gains `factions: tuple[str, ...]`** (one per side). It is used only for

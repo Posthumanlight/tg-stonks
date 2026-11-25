@@ -1,51 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { legal, view } from "../combat/fixtures";
-import { type ConnectionStatus, type RequestPayloads, type ServerMessage, WsError } from "../net/ws";
+import { fakeTransport } from "../net/fakeTransport";
+import { type ConnectionStatus, WsError } from "../net/ws";
 import type { CombatEvent } from "../protocol";
 import { type CombatTransport, createCombatStore } from "./combatStore";
-
-type Handler = (message: ServerMessage) => void;
-
-/** A transport double: records requests, lets the test answer them and push messages. */
-function fakeTransport(status: ConnectionStatus = "open") {
-  const handlers = new Map<string, Handler[]>();
-  const welcome: Array<() => void> = [];
-  const requests: Array<{ type: string; payload: unknown }> = [];
-  let answer: (type: string) => Promise<void> = async () => {};
-  const transport = {
-    status,
-    connect: vi.fn(),
-    close: vi.fn(),
-    request: vi.fn(<T extends keyof RequestPayloads>(type: T, payload: RequestPayloads[T]) => {
-      requests.push({ type, payload });
-      return answer(type);
-    }),
-    on: vi.fn((type: string, handler: Handler) => {
-      handlers.set(type, [...(handlers.get(type) ?? []), handler]);
-      return () => {};
-    }),
-    onWelcome: vi.fn((handler: () => void) => {
-      welcome.push(handler);
-      return () => {};
-    }),
-    onStatus: vi.fn(() => () => {}),
-  };
-  return {
-    transport: transport as unknown as CombatTransport,
-    raw: transport,
-    requests,
-    answerWith(fn: (type: string) => Promise<void>) {
-      answer = fn;
-    },
-    push(message: ServerMessage) {
-      for (const handler of handlers.get(message.type) ?? []) handler(message);
-    },
-    welcome() {
-      for (const handler of welcome) handler();
-    },
-  };
-}
 
 const board = { width: 24, height: 24, terrain: [] };
 const events = (from: number, to: number): CombatEvent[] =>
@@ -53,7 +12,7 @@ const events = (from: number, to: number): CombatEvent[] =>
 
 async function opened(status: ConnectionStatus = "open") {
   const fake = fakeTransport(status);
-  const store = createCombatStore(fake.transport, { createDemo: async () => ({ combat_id: "c1" }) });
+  const store = createCombatStore(fake.transport as CombatTransport, { createDemo: async () => ({ combat_id: "c1" }) });
   await store.openDemo();
   store.applySnapshot({ board, view: view({ seq: 10 }), legal: legal() });
   return { fake, store };
@@ -175,5 +134,58 @@ describe("acting", () => {
     expect(fake.raw.close).toHaveBeenCalledOnce();
     expect(store.combatId.value).toBeNull();
     expect(store.view.value).toBeNull();
+  });
+});
+
+describe("online battles", () => {
+  const players = [
+    { side: 0, user_id: 1, name: "ada" },
+    { side: 1, user_id: 2, name: "bo" },
+  ];
+  const move = { to: [3, 2] as [number, number], cost: 1, provokes: [] };
+
+  function online(me: number) {
+    const fake = fakeTransport();
+    const store = createCombatStore(
+      fake.transport as CombatTransport,
+      { createDemo: async () => ({ combat_id: "c1" }) },
+      () => me,
+    );
+    store.open("c1");
+    store.applySnapshot({
+      board: { ...board, players },
+      view: view(), // unit 1 (side 0) is active
+      legal: legal({ moves: [move] }),
+      deadline_ms: 1_000_000,
+    });
+    return { fake, store };
+  }
+
+  it("acts and highlights only on the player's own side's turn", () => {
+    const waiting = online(2).store; // holds side 1
+    expect(waiting.online.value).toBe(true);
+    expect(waiting.myTurn.value).toBe(false);
+    expect(waiting.marks.value.moves).toEqual([]);
+    expect(waiting.sideNames.value).toEqual(["ada", "bo"]);
+    expect(waiting.deadline.value).toBe(1_000_000);
+
+    const { fake, store } = online(1); // holds side 0: its turn
+    expect(store.myTurn.value).toBe(true);
+    expect(store.marks.value.moves).toEqual([move]);
+    store.tap([3, 2]);
+    expect(fake.requests.some((r) => r.type === "combat.action")).toBe(true);
+  });
+
+  it("a waiting player's tap only inspects", () => {
+    const { fake, store } = online(2);
+    store.tap([3, 2]);
+    expect(fake.requests.some((r) => r.type === "combat.action")).toBe(false);
+  });
+
+  it("hotseat: every side is the player's, no names", async () => {
+    const { store } = await opened();
+    expect(store.online.value).toBe(false);
+    expect(store.myTurn.value).toBe(true);
+    expect(store.sideNames.value).toBeUndefined();
   });
 });

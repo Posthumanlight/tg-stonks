@@ -6,9 +6,15 @@ in-process test backend).
 
 Recovery is lazy: after a (re)start a combat is replayed from its record the first time
 it's touched, so start-up time doesn't grow with the number of fights in flight.
+
+Activation timers (online battles): one deadline heap per host, checked by `tick()`
+(every 0.5 s in a worker), not a task per combat. A timer is armed when an activation
+starts; on expiry the host applies Skip as if the player had sent it. Deadlines aren't
+persisted: a recovered combat gets a fresh full timer when it's next touched.
 """
 
 import asyncio
+import heapq
 import logging
 import secrets
 from collections.abc import Callable
@@ -20,12 +26,13 @@ from app.combat.ground.engine import COMBAT_RULES_VERSION, IllegalAction
 from app.combat.ground.ruleset import CombatRuleset
 from app.combat.ground.serialize import action_from_json, setup_from_json
 from app.combat.ground.setup import SetupError
+from app.combat.match import Match
 from app.persistence.combat_repo import ACTIVE, ActionRow, CombatStore, NewCombat
 from app.persistence.write_behind import WriteBehindBuffer
 from app.protocol.combat import CombatIntentEnvelope
 from app.shared.clock import Clock
 from app.shared.errors import GameError
-from app.workers.combat_instance import CombatInstance
+from app.workers.combat_instance import CombatInstance, IntentResult
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +42,7 @@ Publish = Callable[[str, str], None]
 
 CATCH_UP_LIMIT = 500  # beyond this many missed events a client gets a snapshot
 FINISHED_GRACE_S = 600  # finished combats stay viewable this long
+TIMER_TICK_S = 0.5  # how often a worker checks activation timers
 
 
 class CombatHost:
@@ -58,6 +66,10 @@ class CombatHost:
         self.instances: dict[str, CombatInstance] = {}
         self._last_activity: dict[str, float] = {}
         self._loading: dict[str, asyncio.Task[CombatInstance]] = {}
+        # combat_id -> (activation key, monotonic deadline); the heap may hold stale
+        # entries, recognized by not matching this map.
+        self._deadlines: dict[str, tuple[int, float]] = {}
+        self._timer_heap: list[tuple[float, str, int]] = []
         self.writes: WriteBehindBuffer[ActionRow] = WriteBehindBuffer(
             store.append_actions, interval_s=flush_interval_s
         )
@@ -68,26 +80,20 @@ class CombatHost:
         return sum(1 for i in self.instances.values() if not i.finished)
 
     async def create(
-        self, combat_id: str, owner_user_id: int, mode: str, setup_json: dict[str, Any]
+        self, combat_id: str, match: Match, setup_json: dict[str, Any]
     ) -> dict[str, Any]:
         """Start a combat and persist its record. Returns the first snapshot (JSON)."""
         seed = secrets.randbits(63)  # randomness comes from the shell, never the engine
         try:
             instance = CombatInstance(
-                combat_id,
-                owner_user_id,
-                mode,
-                self.ruleset,
-                setup_from_json(setup_json),
-                seed,
+                combat_id, match, self.ruleset, setup_from_json(setup_json), seed
             )
         except (SetupError, KeyError, TypeError, ValueError) as exc:
             raise GameError("combat.bad_setup", 400, detail=str(exc)) from exc
         await self.store.create(
             NewCombat(
                 combat_id=combat_id,
-                owner_user_id=owner_user_id,
-                mode=mode,
+                match=instance.match,
                 worker_slot=self.slot,
                 setup=setup_json,
                 seed=seed,
@@ -96,7 +102,7 @@ class CombatHost:
             )
         )
         self._register(instance)
-        return instance.snapshot().model_dump(mode="json")
+        return self._snapshot(instance)
 
     async def start(self) -> int:
         """Prepare this slot after a (re)start: abort records that can't be replayed
@@ -139,15 +145,25 @@ class CombatHost:
             intent = CombatIntentEnvelope.model_validate({"intent": intent_json}).intent
         except ValidationError as exc:
             raise GameError("request.invalid", 400) from exc
-        result = instance.handle(user_id, intent)  # raises GameError when refused
-        self._touch(combat_id)
-        self.writes.add(ActionRow(combat_id, result.action_seq, result.action))
-        self._publish(combat_id, result.update.model_dump_json())
-        if result.finished:
-            await self.writes.flush()
-            await self.store.mark(
-                combat_id, "finished", outcome=instance.outcome_json()
-            )
+        await self._commit(instance, instance.handle(user_id, intent))
+
+    async def concede(self, combat_id: str, user_id: int) -> None:
+        """An online player surrenders: the fight ends and the opponent wins."""
+        instance = await self._get(combat_id)
+        await self._commit(instance, instance.concede(user_id))
+
+    async def tick(self) -> None:
+        """Apply expired activation timers (auto-Skip)."""
+        now = self._clock.monotonic()
+        while self._timer_heap and self._timer_heap[0][0] <= now:
+            deadline, combat_id, key = heapq.heappop(self._timer_heap)
+            if self._deadlines.get(combat_id) != (key, deadline):
+                continue  # stale: re-armed or dropped since
+            del self._deadlines[combat_id]
+            instance = self.instances.get(combat_id)
+            result = instance.timeout() if instance is not None else None
+            if instance is not None and result is not None:
+                await self._commit(instance, result)
 
     async def subscribe(
         self, combat_id: str, user_id: int, last_seq: int | None
@@ -159,11 +175,11 @@ class CombatHost:
         self._touch(combat_id)
         update = instance.catch_up(last_seq, CATCH_UP_LIMIT)
         if update is not None:
+            update = update.model_copy(
+                update={"deadline_ms": self._deadline_ms(combat_id)}
+            )
             return {"kind": "events", "update": update.model_dump(mode="json")}
-        return {
-            "kind": "snapshot",
-            "snapshot": instance.snapshot().model_dump(mode="json"),
-        }
+        return {"kind": "snapshot", "snapshot": self._snapshot(instance)}
 
     # --- internals ---------------------------------------------------------------------
 
@@ -194,8 +210,7 @@ class CombatHost:
         try:
             instance = CombatInstance(
                 stored.combat_id,
-                stored.owner_user_id,
-                stored.mode,
+                stored.match,
                 self.ruleset,
                 setup_from_json(stored.setup),
                 stored.seed,
@@ -209,9 +224,52 @@ class CombatHost:
         self._register(instance)
         return instance
 
+    async def _commit(self, instance: CombatInstance, result: IntentResult) -> None:
+        """An applied action: record it, re-arm the timer, publish, finish."""
+        combat_id = instance.combat_id
+        self._touch(combat_id)
+        self.writes.add(ActionRow(combat_id, result.action_seq, result.action))
+        self._arm(instance)
+        update = result.update.model_copy(
+            update={"deadline_ms": self._deadline_ms(combat_id)}
+        )
+        self._publish(combat_id, update.model_dump_json())
+        if result.finished:
+            await self.writes.flush()
+            await self.store.mark(
+                combat_id, "finished", outcome=instance.outcome_json()
+            )
+
+    def _snapshot(self, instance: CombatInstance) -> dict[str, Any]:
+        snapshot = instance.snapshot().model_copy(
+            update={"deadline_ms": self._deadline_ms(instance.combat_id)}
+        )
+        return snapshot.model_dump(mode="json")
+
+    def _arm(self, instance: CombatInstance) -> None:
+        """(Re)start the timer when a new activation began; drop it when none runs."""
+        combat_id = instance.combat_id
+        if not instance.timer_s or instance.finished or instance.state.active is None:
+            self._deadlines.pop(combat_id, None)
+            return
+        current = self._deadlines.get(combat_id)
+        if current is not None and current[0] == instance.activations:
+            return  # the same activation goes on: the same deadline
+        deadline = self._clock.monotonic() + instance.timer_s
+        self._deadlines[combat_id] = (instance.activations, deadline)
+        heapq.heappush(self._timer_heap, (deadline, combat_id, instance.activations))
+
+    def _deadline_ms(self, combat_id: str) -> int | None:
+        current = self._deadlines.get(combat_id)
+        if current is None:
+            return None
+        remaining = current[1] - self._clock.monotonic()
+        return int((self._clock.now() + remaining) * 1000)
+
     def _register(self, instance: CombatInstance) -> None:
         self.instances[instance.combat_id] = instance
         self._touch(instance.combat_id)
+        self._arm(instance)
 
     def _touch(self, combat_id: str) -> None:
         self._last_activity[combat_id] = self._clock.monotonic()
@@ -219,3 +277,4 @@ class CombatHost:
     def _forget(self, combat_id: str) -> None:
         self.instances.pop(combat_id, None)
         self._last_activity.pop(combat_id, None)
+        self._deadlines.pop(combat_id, None)

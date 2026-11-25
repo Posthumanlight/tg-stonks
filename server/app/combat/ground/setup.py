@@ -4,7 +4,7 @@ Army building (factions, unit caps) lives one layer up, in `deployment.py`; this
 holds what every combat must satisfy, plus the placement check both layers share.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from app.combat.ground.board import Board, Square, footprint
@@ -156,7 +156,7 @@ def validate_board(ruleset: CombatRuleset, board: Board) -> None:
         raise SetupError("combat.bad_setup", f"unknown terrain {sorted(unknown)}")
 
 
-def side_positions(units: tuple[UnitSetup, ...]) -> list[tuple[int, int]]:
+def side_positions(units: Sequence[UnitSetup]) -> list[tuple[int, int]]:
     """(side, index within that side) for each unit, in setup order."""
     seen: dict[int, int] = {}
     positions = []
@@ -178,9 +178,20 @@ def validate_setup(
     sides = tuple(sorted({u.side for u in setup.units}))
     if len(sides) < 2:
         raise SetupError("setup.empty_side", "a combat needs at least two sides")
-    positions = side_positions(setup.units)
+    return sides, place_units(ruleset, setup.board, setup.units, zones)
+
+
+def place_units(
+    ruleset: CombatRuleset,
+    board: Board,
+    setups: Sequence[UnitSetup],
+    zones: Mapping[int, Zone] | None = None,
+) -> tuple[UnitState, ...]:
+    """Build the units and check their sizes and placement, in order. Also used for one
+    side on its own (an online player's army), where overlap is within that side."""
+    positions = side_positions(setups)
     units = []
-    for uid, (u, (side, index)) in enumerate(zip(setup.units, positions)):
+    for uid, (u, (side, index)) in enumerate(zip(setups, positions)):
         try:
             units.append(
                 build_unit(ruleset, uid, u.unit_type, u.side, u.origin, u.models)
@@ -191,9 +202,7 @@ def validate_setup(
     taken: set[Square] = set()
     for unit, (side, index) in zip(units, positions):
         zone = zones.get(side) if zones is not None else None
-        issue = placement_issue(
-            setup.board, passable, unit.origin, unit.size, taken, zone
-        )
+        issue = placement_issue(board, passable, unit.origin, unit.size, taken, zone)
         if issue is not None:
             raise SetupError(
                 issue,
@@ -202,7 +211,7 @@ def validate_setup(
                 unit=index,
             )
         taken.update(unit.squares)
-    return sides, tuple(units)
+    return tuple(units)
 
 
 def default_board(ruleset: CombatRuleset, terrain: str = "open") -> Board:

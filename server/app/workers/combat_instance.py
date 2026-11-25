@@ -1,5 +1,8 @@
 """One combat: the pure engine plus seats, an event log and intent translation.
 
+Seats come from the combat's `Match` (hotseat: the owner holds every side; online: one
+side per player).
+
 No I/O and no transport (persistence and delivery belong to `CombatHost`). Intents are
 handled synchronously, so on the worker's event loop two of them can never interleave —
 no lock is needed.
@@ -9,7 +12,15 @@ import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from app.combat.ground.actions import Action, Attack, Move, Skip, UseAbility, Wait
+from app.combat.ground.actions import (
+    Action,
+    Attack,
+    Concede,
+    Move,
+    Skip,
+    UseAbility,
+    Wait,
+)
 from app.combat.ground.engine import (
     IllegalAction,
     apply_action,
@@ -17,10 +28,11 @@ from app.combat.ground.engine import (
     resume,
     start_combat,
 )
-from app.combat.ground.events import Event
+from app.combat.ground.events import ActivationStarted, Event
 from app.combat.ground.ruleset import CombatRuleset
 from app.combat.ground.serialize import action_to_json, outcome_to_json
 from app.combat.ground.setup import CombatSetup
+from app.combat.match import Match
 from app.protocol.combat import (
     AbilityIntent,
     AttackIntent,
@@ -28,6 +40,7 @@ from app.protocol.combat import (
     CombatSnapshot,
     CombatUpdate,
     MoveIntent,
+    PlayerView,
     SkipIntent,
     WaitIntent,
     board_view,
@@ -46,36 +59,33 @@ class IntentResult:
     finished: bool
 
 
-def hotseat_seats(setup: CombatSetup, owner_user_id: int) -> dict[int, int]:
-    """Hotseat: the owner holds every side."""
-    return {u.side: owner_user_id for u in setup.units}
-
-
 class CombatInstance:
     def __init__(
         self,
         combat_id: str,
-        owner_user_id: int,
-        mode: str,
+        match: Match,
         ruleset: CombatRuleset,
         setup: CombatSetup,
         seed: int,
         *,
         actions: Sequence[Action] = (),
     ) -> None:
+        if not match.seats:  # an older record: the owner holds every side
+            match = Match.hotseat(match.owner_user_id, (u.side for u in setup.units))
         self.combat_id = combat_id
-        self.owner_user_id = owner_user_id
-        self.mode = mode
+        self.match = match
         self.ruleset = ruleset
         self.setup = setup
         self.seed = seed
-        self.seats = hotseat_seats(setup, owner_user_id)
+        self.seats = match.seat_map()
         if actions:
             self.state, log, self.rng = resume(ruleset, setup, seed, actions)
         else:
             self.rng = random.Random(seed)
             self.state, log = start_combat(ruleset, setup, self.rng)
-        self.events: list[Event] = list(log)
+        self.events: list[Event] = []
+        self.activations = 0  # activations started so far (the timer's key)
+        self._log(log)
         self.actions: list[Action] = list(actions)
 
     @property
@@ -90,8 +100,19 @@ class CombatInstance:
     def outcome_json(self) -> dict | None:
         return outcome_to_json(self.state.outcome)
 
+    @property
+    def timer_s(self) -> int | None:
+        return self.match.timer_s
+
     def seated(self, user_id: int) -> bool:
         return user_id in self.seats.values()
+
+    def side_of(self, user_id: int) -> int:
+        """The user's one side (online play). Hotseat owners hold several: refused."""
+        sides = [side for side, holder in self.seats.items() if holder == user_id]
+        if len(sides) != 1:
+            raise GameError("combat.not_a_participant", 403)
+        return sides[0]
 
     # --- intents -----------------------------------------------------------------------
 
@@ -107,13 +128,32 @@ class CombatInstance:
             raise GameError("combat.not_your_turn", 403)
         try:
             action = self._to_action(intent)
+        except IllegalAction as exc:
+            raise GameError(exc.reason, 400) from exc
+        return self._apply(action)
+
+    def concede(self, user_id: int) -> IntentResult:
+        """The user's side gives up (online surrender); the other side wins."""
+        if self.finished:
+            raise GameError("combat.finished", 409)
+        return self._apply(Concede(self.side_of(user_id)))
+
+    def timeout(self) -> IntentResult | None:
+        """The activation timer ran out: skip for the active unit's player. Recorded
+        like any Skip, so replays are unaffected. None when nobody is active."""
+        if self.finished or self.state.active is None:
+            return None
+        return self._apply(Skip())
+
+    def _apply(self, action: Action) -> IntentResult:
+        try:
             self.state, events = apply_action(
                 self.ruleset, self.state, action, self.rng
             )
         except IllegalAction as exc:
             raise GameError(exc.reason, 400) from exc
         from_seq = self.seq
-        self.events.extend(events)
+        self._log(events)
         self.actions.append(action)
         return IntentResult(
             update=self._update(from_seq),
@@ -121,6 +161,10 @@ class CombatInstance:
             action_seq=len(self.actions) - 1,
             finished=self.finished,
         )
+
+    def _log(self, events: Sequence[Event]) -> None:
+        self.events.extend(events)
+        self.activations += sum(isinstance(e, ActivationStarted) for e in events)
 
     def _to_action(self, intent: CombatIntent) -> Action:
         match intent:
@@ -162,7 +206,14 @@ class CombatInstance:
 
     def snapshot(self) -> CombatSnapshot:
         return CombatSnapshot(
-            board=board_view(self.state, self.setup.factions),
+            board=board_view(
+                self.state,
+                self.setup.factions,
+                [
+                    PlayerView(side=s.side, user_id=s.user_id, name=s.name)
+                    for s in self.match.seats
+                ],
+            ),
             view=combat_view(self.combat_id, self.seq, self.state),
             legal=combat_legal(legal_actions(self.ruleset, self.state)),
         )

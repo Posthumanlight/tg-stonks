@@ -10,6 +10,9 @@ import {
   type ErrorMessage,
   PROTOCOL_VERSION,
   type PongMessage,
+  type RoomClosedMessage,
+  type RoomStartedMessage,
+  type RoomStateMessage,
   type WelcomeMessage,
 } from "../protocol";
 
@@ -19,7 +22,10 @@ export type ServerMessage =
   | ErrorMessage
   | PongMessage
   | CombatSnapshotMessage
-  | CombatEventsMessage;
+  | CombatEventsMessage
+  | RoomStateMessage
+  | RoomStartedMessage
+  | RoomClosedMessage;
 export type ServerType = ServerMessage["type"];
 type MessageOf<T extends ServerType> = Extract<ServerMessage, { type: T }>;
 
@@ -29,6 +35,8 @@ export interface RequestPayloads {
   "combat.subscribe": { combat_id: string; last_seq?: number | null };
   "combat.unsubscribe": { combat_id: string };
   "combat.action": { combat_id: string; intent: unknown };
+  "room.subscribe": { room_id: string };
+  "room.unsubscribe": { room_id: string };
 }
 
 export type ConnectionStatus =

@@ -33,8 +33,10 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
 - **Production hosting:** FastAPI serves `client/dist` at `/` when the directory exists, so
   there's one origin and no CORS.
 - **Screens** (see [architecture › Lobby](architecture.md#lobby)): the `screen` signal
-  (`src/state/screen.ts`) drives `boot → login → lobby → galaxy | builder | combat`.
-  Menus are Preact overlays; the galaxy, builder and combat screens are Phaser scenes.
+  (`src/state/screen.ts`) drives
+  `boot → login → lobby → galaxy | builder | rooms → room | combat`. Menus (and `rooms`)
+  are Preact overlays; the galaxy, builder, room and combat screens are over Phaser
+  scenes. The room screen uses the builder's `deploy` scene.
   - **Login/register:** forms calling `/api/auth/login` and `/api/auth/register`.
   - **Lobby:**
     - the username and logout;
@@ -43,7 +45,12 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
       [Custom battle screen](#custom-battle-screen));
     - **"Quick battle"** (`POST /api/combats/demo`) goes straight to the combat screen;
     - when `GET /api/combats` lists an active fight, **"Resume"** and **"Abandon"**
-      (`POST /api/combats/{id}/abandon`, after a confirm) appear.
+      (`POST /api/combats/{id}/abandon`, after a confirm) appear;
+    - an **Online** group (see [Lobby rooms](#lobby-rooms)):
+      - "Online games" goes to room search and creation;
+      - a **room code** field joins by code (prefilled from a `?room=CODE` link);
+      - "Back to your room", or "Resume" / "Surrender" for an online battle;
+      - why a room ended (`room.closed.*`).
 - **Phaser host** (`src/game/host.ts`): the game is created the first time a canvas
   screen is shown, and hidden with its loop asleep on DOM-only screens. Scenes are
   registered without autostart; each canvas screen has one entry scene (`boot` → galaxy,
@@ -74,9 +81,11 @@ client/
   scripts/gen-protocol.mjs
   src/
     main.tsx          i18n → overlay → Phaser → load data
-    net/              http.ts (request wrapper), api.ts (endpoints), ws.ts (WsClient)
+    net/              http.ts (request wrapper), api.ts (endpoints), ws.ts (WsClient),
+                      fakeTransport.ts (WebSocket double for store tests)
     state/            signals: auth, screen, galaxy, combatStore (logic), combat (wiring),
-                      builderStore (logic), builder (wiring)
+                      builderStore (logic), builder (wiring), roomStore + roomsStore
+                      (logic), rooms (wiring)
     combat/           pure combat UI logic: interaction.ts (tap → intent, highlights),
                       log.ts (event → log line), fixtures.ts (test data)
     builder/          pure builder logic: placement.ts (placement hints), draft.ts (draft
@@ -89,7 +98,8 @@ client/
                       DeployScene, boardRenderer, palette)
     ui/               App.tsx; screens/ (Login, Lobby, GalaxyOverlay);
                       combat/ (CombatScreen, ActionBar, UnitPanel, CombatLog, …);
-                      builder/ (BuilderScreen, RosterTray, DeployPanel); styles.css
+                      builder/ (BuilderScreen + Dock, RosterTray, DeployPanel);
+                      rooms/ (RoomsScreen, RoomScreen, navigation); styles.css
     protocol/         GENERATED
 ```
 Pure logic, such as `scenes/galaxy/layout.ts` and the i18n helpers, sits apart from
@@ -142,8 +152,10 @@ Phaser and the DOM. It is unit-tested with vitest in `*.test.ts` files next to t
 - **State** lives in two files. `state/combatStore.ts` is a factory over an injected
   transport; `state/combat.ts` wires it to the app's socket.
   - **Signals:** `combatId`, `board`, `view`, `legal`, `log`, `mode`, `inspected`,
-    `lastError`, `connection` and `busy`, plus the computed `shownUnit`, `activeUnit` and
-    `marks` (highlights).
+    `lastError`, `connection`, `busy` and `deadline`, plus these computed ones:
+    - `shownUnit`, `activeUnit`, `marks` (highlights);
+    - online: `mySides` (from `board.players` and the signed-in user), `online`,
+      `myTurn` and `sideNames`.
   - **Snapshots and updates:** `combat.snapshot` sets the board, view and legal.
     `combat.events` replaces the view and legal and appends the events to the log (capped
     at 200).
@@ -183,7 +195,15 @@ Phaser and the DOM. It is unit-tested with vitest in `*.test.ts` files next to t
   page, returns the same active fight. The subscribe answers with a snapshot.
 - **Side labels** use the faction name from `board.factions` ("Concord", "Brood"), with
   "Side N" as the fallback for old records. Mirror matches add the number ("Concord 1",
-  "Concord 2").
+  "Concord 2"). Online, the player's name leads ("ada · Concord").
+- **Online battles:** the player acts only on their own side's activations.
+  - **On the opponent's turn:** the action bar says "Opponent's turn…", there are no
+    highlights, and a tap only inspects. The server refuses other intents anyway
+    (`combat.not_your_turn`).
+  - **Top bar:** a countdown from `deadline_ms` (`TurnTimer`, urgent under 10 s) and
+    **Surrender**, after a confirm, which calls `/abandon`.
+  - **The outcome dialog** says Victory or Defeat from the player's side, and notes a
+    surrender.
 
 ## Custom battle screen
 The player builds both armies and deploys them on the fixed map, then starts a hotseat
@@ -270,6 +290,46 @@ and the endpoints in [protocol › Custom battle models](protocol.md#custom-batt
   - the drag state machine as pure transitions (place, move, invalid drop snaps back,
     remove, tap fallback).
 
+## Lobby rooms
+Online 1v1 games (rules in [lobby-rooms](lobby-rooms.md), endpoints in
+[protocol](protocol.md#lobby-room-models)).
+
+- **Rooms screen** (`ui/rooms/RoomsScreen.tsx`):
+  - **Create a room:** name, the points and timer presets (from `BuilderView.rooms`),
+    and private.
+  - **Find a room:** name search and a points filter, over `state/roomsStore.ts`. Only
+    the latest answer counts. It refreshes every 5 s while the tab is visible, and on
+    demand. Joining a listed room or creating one goes to the room screen.
+- **Room store** (`state/roomStore.ts`, a factory over the transport and `roomsApi`):
+  - **Signals:** `roomId`, `room` (the pushed `RoomView`), `closed` (why it ended),
+    `started` (the battle's id) and `busy`, plus the computed `me`, `opponent` and
+    `isHost`.
+  - **Subscribing:** `open(id)` subscribes, and so does every reconnect, because the
+    subscriptions are presence.
+  - **Actions:** `ready(side)`, `unready`, `kick` and `leave` call HTTP. Errors are
+    thrown to the screen.
+  - **Leaving the screen:** `detach(closeSocket)` unsubscribes. The socket stays open
+    when a battle takes over.
+- **Room screen** (`ui/rooms/RoomScreen.tsx`), over the deploy scene:
+  - **Header:** leave, the name, and the code (a copy button); then the opponent (status,
+    and the host's Kick) and the room's limits.
+  - **Dock:** the builder's `Dock`, with a **Ready / Not ready** bar.
+- **Builder room mode** (`builderStore`, `mode` = `{kind: "room", side, pointsLimit}`):
+  - **Scene and gestures:** the same scene, roster and drag and drop.
+  - **The view** uses `BuilderView.rooms.zones`.
+  - **What's edited and checked:** only the player's side. `draftIssues` gets a scope
+    of `{sides, pointsLimit}` and adds `setup.over_points`.
+  - **The opponent's side** stays empty and hidden.
+  - **Saved drafts:** each room side has its own (`builder-draft.room{side}.v1`).
+  - **Ready** sends the side. `locked` makes it read-only until Unready.
+  - **Reconnects:** `enterRoom` takes the locked army (`your_army`) back, and `exitRoom`
+    restores the hotseat draft.
+- **Orchestration** (`main.tsx`):
+  - the room's view switches the builder into room mode and keeps the lock in sync;
+  - `room.started` opens the battle;
+  - `room.closed` returns to the lobby;
+  - leaving the room screen detaches.
+
 ## Dev workflow
 Run these in two terminals, from the repo root and from `client/`:
 ```
@@ -293,8 +353,10 @@ npm run dev            # http://localhost:5173, also on your LAN IP for a real p
 - **Drag on small screens:** at 360×640 the roster tray and the board share little
   space. Is a collapsible tray enough, or do we need a full-screen roster sheet? Long
   press vs immediate drag on tokens needs testing on real phones.
-- **Zone UI** once maps get zones: tint both zones, or only the active side's? Auto-fill
-  a side into its zone?
+- **Zone UI:** rooms tint only the player's own zone. Should the opponent's zone show
+  too? Auto-fill a side into its zone?
+- **Room header height:** the deploy scene reserves 96 px at the top. A longer room
+  header (chat, a second opponent line) would need that inset to grow per screen.
 - **Bundle size:** about 1.4 MB minified (370 KB gzip), mostly Phaser. Should Phaser be
   lazy-loaded behind the overlay, or does a custom Phaser build cut it?
 - **High-DPI rendering:** the canvas renders at CSS pixels, which is fine for pixel art, but

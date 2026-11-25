@@ -13,7 +13,7 @@ export function CombatLog() {
   useEffect(() => end.current?.scrollIntoView({ block: "end" }), [events]);
 
   const lines = events.flatMap((event) => {
-    const text = formatEvent(event, units, factions);
+    const text = formatEvent(event, units, factions, combat.sideNames.value);
     return text ? [{ seq: event.seq, text }] : [];
   });
   return (

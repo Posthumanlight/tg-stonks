@@ -8,6 +8,9 @@ export function ActionBar() {
   const active = combat.view.value?.active;
   const mode = combat.mode.value;
   if (!legal || !active) return null;
+  if (!combat.myTurn.value) {
+    return <p class="muted">{t("combat.opponent_turn")}</p>; // look, don't touch
+  }
 
   const disabled = combat.busy.value || combat.connection.value !== "open";
   const hint =

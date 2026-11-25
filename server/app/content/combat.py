@@ -58,6 +58,24 @@ class BoardSize(_Model):
     height: int = Field(ge=1)
 
 
+class PvpRules(_Model):
+    """Online 1v1 rooms (docs/lobby-rooms.md). 0 in a preset list means unlimited."""
+
+    points_presets: tuple[int, ...] = Field(min_length=1)
+    timer_presets: tuple[int, ...] = Field(min_length=1)
+    room_idle_ttl_s: int = Field(ge=1)
+    guest_grace_s: int = Field(ge=0)
+    host_grace_s: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def _presets(self) -> "PvpRules":
+        for name in ("points_presets", "timer_presets"):
+            values = getattr(self, name)
+            if any(v < 0 for v in values) or len(set(values)) != len(values):
+                raise ValueError(f"{name}: distinct values >= 0 (0 = unlimited)")
+        return self
+
+
 class RulesContent(_Model):
     default_board: BoardSize
     board_min: int = Field(ge=1)
@@ -72,9 +90,12 @@ class RulesContent(_Model):
     friendly_units_screen: bool
     first_round_no_attacks: bool
     max_trigger_depth: int = Field(ge=1)
+    pvp: PvpRules
 
     @model_validator(mode="after")
     def _board_limits(self) -> "RulesContent":
+        if self.activation_timer_s not in self.pvp.timer_presets:
+            raise ValueError("activation_timer_s must be one of pvp.timer_presets")
         if self.board_min > self.board_max:
             raise ValueError("board_min exceeds board_max")
         for side in (self.default_board.width, self.default_board.height):

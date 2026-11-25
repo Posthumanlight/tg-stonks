@@ -7,12 +7,14 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from app.combat.match import PVP, Match, Seat
 from app.services.combat_backend import InProcessBackend, ProcessBackend
 from app.shared.clock import FakeClock, SystemClock
 from app.shared.errors import GameError
 from app.workers.supervisor import Supervisor, SupervisorConfig
 
 OWNER = 1
+HOTSEAT_MATCH = Match.hotseat(OWNER, (0, 1))
 COMBAT = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 
@@ -50,7 +52,7 @@ async def _wait_for(condition, timeout: float = 5.0) -> None:
 async def test_create_intent_push_subscribe(backend, demo_setup_json) -> None:
     assert backend.slots == 2
     creating = asyncio.ensure_future(
-        backend.create(1, COMBAT, OWNER, "hotseat", demo_setup_json)
+        backend.create(1, COMBAT, HOTSEAT_MATCH, demo_setup_json)
     )
     await asyncio.sleep(0)
     # Counted from the moment of placement, so a burst of creates spreads out.
@@ -71,7 +73,7 @@ async def test_create_intent_push_subscribe(backend, demo_setup_json) -> None:
 
 
 async def test_errors_cross_the_boundary_unchanged(backend, demo_setup_json) -> None:
-    await backend.create(0, COMBAT, OWNER, "hotseat", demo_setup_json)
+    await backend.create(0, COMBAT, HOTSEAT_MATCH, demo_setup_json)
     with pytest.raises(GameError) as not_your_turn:
         await backend.intent(0, COMBAT, 2, {"type": "skip"})
     assert (not_your_turn.value.reason_key, not_your_turn.value.status) == (
@@ -85,7 +87,7 @@ async def test_errors_cross_the_boundary_unchanged(backend, demo_setup_json) -> 
 
 
 async def test_close_abandons_the_combat(backend, store, demo_setup_json) -> None:
-    await backend.create(0, COMBAT, OWNER, "hotseat", demo_setup_json)
+    await backend.create(0, COMBAT, HOTSEAT_MATCH, demo_setup_json)
     await backend.intent(0, COMBAT, OWNER, {"type": "skip"})
     await backend.close(0, COMBAT, "player")
     stored = await store.load(COMBAT)
@@ -93,6 +95,22 @@ async def test_close_abandons_the_combat(backend, store, demo_setup_json) -> Non
     assert len(stored.actions) == 1  # pending actions were flushed first
     with pytest.raises(GameError, match="combat.not_found"):
         await backend.intent(0, COMBAT, OWNER, {"type": "skip"})
+
+
+async def test_concede_finishes_an_online_combat(
+    backend, store, demo_setup_json
+) -> None:
+    match = Match(OWNER, PVP, (Seat(0, OWNER, "a"), Seat(1, 2, "b")), timer_s=45)
+    snapshot = await backend.create(0, COMBAT, match, demo_setup_json)
+    assert [p["user_id"] for p in snapshot["board"]["players"]] == [OWNER, 2]
+    assert snapshot["deadline_ms"] is not None
+    await backend.concede(0, COMBAT, 2)
+    await _wait_for(lambda: bool(backend.pushes))
+    outcome = json.loads(backend.pushes[-1][1])["view"]["outcome"]
+    assert outcome["winners"] == [0] and outcome["reason"] == "concede"
+    stored = await store.load(COMBAT)
+    assert stored is not None and stored.status == "finished"
+    assert stored.match == match
 
 
 @pytest.mark.slow
@@ -110,7 +128,7 @@ async def test_killed_worker_recovers_its_combats(
     backend = ProcessBackend(supervisor)
     await backend.start()
     try:
-        await backend.create(0, COMBAT, OWNER, "hotseat", demo_setup_json)
+        await backend.create(0, COMBAT, HOTSEAT_MATCH, demo_setup_json)
         await backend.intent(0, COMBAT, OWNER, {"type": "wait"})
         before = await backend.subscribe(0, COMBAT, OWNER, None)
         await asyncio.sleep(0.3)  # let write-behind flush

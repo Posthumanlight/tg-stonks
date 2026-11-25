@@ -7,6 +7,7 @@ Handlers raise GameError to answer `error {id, reason_key}`; success answers `ac
 from dataclasses import dataclass
 
 from app.auth.tokens import TokenService
+from app.lobby.service import RoomService
 from app.protocol import ws
 from app.services.combat_router import CombatRouter
 from app.shared.dispatch import Dispatcher
@@ -19,6 +20,7 @@ class WsContext:
     connection: Connection
     tokens: TokenService
     combats: CombatRouter
+    rooms: RoomService
 
 
 dispatcher: Dispatcher[WsContext] = Dispatcher()
@@ -60,3 +62,13 @@ async def unsubscribe(ctx: WsContext, msg: ws.UnsubscribeMessage) -> None:
 async def action(ctx: WsContext, msg: ws.ActionMessage) -> None:
     intent = msg.payload.intent.model_dump(mode="json")
     await ctx.combats.intent(ctx.connection.user_id, msg.payload.combat_id, intent)
+
+
+@dispatcher.on("room.subscribe")
+async def room_subscribe(ctx: WsContext, msg: ws.RoomSubscribeMessage) -> None:
+    ctx.rooms.subscribe(ctx.connection, msg.payload.room_id)
+
+
+@dispatcher.on("room.unsubscribe")
+async def room_unsubscribe(ctx: WsContext, msg: ws.RoomUnsubscribeMessage) -> None:
+    ctx.rooms.unsubscribe(ctx.connection, msg.payload.room_id)

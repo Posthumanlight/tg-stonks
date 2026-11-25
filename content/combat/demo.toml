@@ -2,8 +2,8 @@
 # - The board: `rows` + `legend`.
 # - `factions` + `[[units]]`: the default armies, i.e. the builder's prefill and the
 #   quick battle (POST /api/combats/demo). They pass the same checks as a custom setup.
-# - `[deployment]` (optional): zones per side. Absent = the whole board is allowed.
-#   Example: [deployment] zones = [{ side = 0, rects = [[0, 0, 24, 6]] }, ...]
+# - `[deployment]` (optional): zones per side. Online (PvP) rooms enforce them; hotseat
+#   custom battles deploy anywhere. Absent = the whole board, in every mode.
 # Changing this file changes only NEW combats: running ones keep the setup in their record.
 
 factions = ["concord", "brood"]  # default faction per side
@@ -35,6 +35,12 @@ rows = [
   ".......rr..........ff...",
   "........................",
   "........................",
+]
+
+[deployment]
+zones = [
+  { side = 0, rects = [[0, 0, 24, 6]] },   # top six rows
+  { side = 1, rects = [[0, 18, 24, 6]] },  # bottom six rows
 ]
 
 # Concord (side 0), top-left

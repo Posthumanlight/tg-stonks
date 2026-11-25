@@ -5,7 +5,7 @@ board_min = 8                         # smallest allowed side length
 board_max = 64                        # largest allowed side length
 round_limit = 12                      # after this round, the side with more surviving points wins
 draw_margin_percent = 10              # point totals within this % of the leader are a draw
-activation_timer_s = 45               # enforced by the server shell (auto-Skip), not the engine
+activation_timer_s = 45               # default turn timer (one of pvp.timer_presets); enforced by the server shell (auto-Skip), not the engine
 max_models_per_unit = 100             # hard cap on any unit's size
 max_units_per_side = 12               # custom battles: server-safety cap, not balance
 base_reactions = 1                    # reactions per unit per round (opportunity attacks)
@@ -13,3 +13,11 @@ opportunity_attack_hit_percent = 100  # hits of an opportunity attack, % of a no
 friendly_units_screen = true          # do the shooter's own units screen its shots?
 first_round_no_attacks = false        # forbid attacks in round 1 (anti alpha-strike option)
 max_trigger_depth = 8                 # max nesting of hook triggers set off by other triggers
+
+# Online 1v1 rooms (docs/lobby-rooms.md). 0 = unlimited in both preset lists.
+[pvp]
+points_presets = [500, 1000, 1500, 0]     # army points limits a host can choose
+timer_presets = [45, 60, 90, 120, 180, 0] # seconds per activation a host can choose
+room_idle_ttl_s = 1800                    # a room with no change for this long closes
+guest_grace_s = 30                        # a disconnected guest loses the seat after this
+host_grace_s = 60                         # a disconnected host closes the room after this

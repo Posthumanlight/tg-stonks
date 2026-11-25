@@ -1,4 +1,5 @@
-"""Player intents for the active unit. The engine validates every one of them."""
+"""Player intents. All but `Concede` are for the active unit; the engine validates
+every one of them."""
 
 from dataclasses import dataclass
 
@@ -33,4 +34,12 @@ class Skip:
     pass
 
 
-Action = Move | Attack | UseAbility | Wait | Skip
+@dataclass(frozen=True, slots=True)
+class Concede:
+    """A side gives up (an online player's surrender), at any time: the fight ends and
+    the other sides win. Takes no turn and rolls no dice."""
+
+    side: int
+
+
+Action = Move | Attack | UseAbility | Wait | Skip | Concede

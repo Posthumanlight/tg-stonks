@@ -5,6 +5,7 @@ from pydantic import Field
 
 from app.combat.ground.deployment import Army, ArmyUnit, BattleMap
 from app.combat.ground.ruleset import CombatRuleset
+from app.combat.ground.setup import Zone
 from app.protocol.base import ProtocolModel
 from app.protocol.combat import BoardView
 from app.protocol.errors import SetupErrorRef  # noqa: F401 - re-exported
@@ -50,6 +51,15 @@ class BuilderLimits(ProtocolModel):
     max_units_per_side: int
 
 
+class RoomPresets(ProtocolModel):
+    """What a host may choose for an online room, and where each side deploys."""
+
+    points_presets: list[int]  # 0 = unlimited
+    timer_presets: list[int]  # seconds per activation; 0 = unlimited
+    default_timer_s: int
+    zones: list[DeployZone] | None  # null: the whole board
+
+
 class DeployedUnit(ProtocolModel):
     unit_type: str
     models: int = Field(ge=1)
@@ -72,19 +82,32 @@ class BuilderView(ProtocolModel):
     factions: list[FactionCard]
     limits: BuilderLimits
     defaults: CustomCombatRequest
+    rooms: RoomPresets
 
 
 # --- converters (pure) -----------------------------------------------------------------
 
 
-def armies_from_request(request: CustomCombatRequest) -> tuple[Army, ...]:
-    return tuple(
-        Army(
-            side.faction,
-            tuple(ArmyUnit(u.unit_type, u.origin, u.models) for u in side.units),
-        )
-        for side in request.sides
+def army_from_side(side: SideSetup) -> Army:
+    return Army(
+        side.faction,
+        tuple(ArmyUnit(u.unit_type, u.origin, u.models) for u in side.units),
     )
+
+
+def request_side(army: Army) -> SideSetup:
+    """An army whose model counts are all set (a player's) back as a request side."""
+    return SideSetup(
+        faction=army.faction,
+        units=[
+            DeployedUnit(unit_type=u.unit_type, models=u.models, origin=u.origin)
+            for u in army.units
+        ],
+    )
+
+
+def armies_from_request(request: CustomCombatRequest) -> tuple[Army, ...]:
+    return tuple(army_from_side(side) for side in request.sides)
 
 
 def request_from_armies(
@@ -109,8 +132,22 @@ def request_from_armies(
     )
 
 
-def builder_view(ruleset: CombatRuleset, battle_map: BattleMap) -> BuilderView:
+def _zones(zones: tuple[Zone, ...] | None) -> list[DeployZone] | None:
+    if zones is None:
+        return None
+    return [
+        DeployZone(side=z.side, rects=[(r.x, r.y, r.w, r.h) for r in z.rects])
+        for z in zones
+    ]
+
+
+def builder_view(
+    ruleset: CombatRuleset, battle_map: BattleMap, room_map: BattleMap
+) -> BuilderView:
+    """`battle_map` is the hotseat builder's (no zones); `room_map` adds the zones
+    online rooms deploy in."""
     content = ruleset.content
+    pvp = ruleset.rules.pvp
     board = battle_map.board
     return BuilderView(
         board=BoardView(
@@ -120,14 +157,7 @@ def builder_view(ruleset: CombatRuleset, battle_map: BattleMap) -> BuilderView:
             tid: TerrainCard(passable=passable)
             for tid, passable in ruleset.passable_terrain.items()
         },
-        zones=(
-            None
-            if battle_map.zones is None
-            else [
-                DeployZone(side=z.side, rects=[(r.x, r.y, r.w, r.h) for r in z.rects])
-                for z in battle_map.zones
-            ]
-        ),
+        zones=_zones(battle_map.zones),
         factions=[
             FactionCard(
                 id=fid,
@@ -152,4 +182,10 @@ def builder_view(ruleset: CombatRuleset, battle_map: BattleMap) -> BuilderView:
         ],
         limits=BuilderLimits(max_units_per_side=ruleset.rules.max_units_per_side),
         defaults=request_from_armies(ruleset, battle_map.defaults),
+        rooms=RoomPresets(
+            points_presets=list(pvp.points_presets),
+            timer_presets=list(pvp.timer_presets),
+            default_timer_s=ruleset.rules.activation_timer_s,
+            zones=_zones(room_map.zones),
+        ),
     )

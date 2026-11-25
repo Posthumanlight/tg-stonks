@@ -6,10 +6,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.persistence.models import Combat, CombatAction
+from app.combat.match import Match, Seat
+from app.persistence.models import Combat, CombatAction, CombatSeat
 
 ACTIVE = "active"
 
@@ -17,8 +18,7 @@ ACTIVE = "active"
 @dataclass(frozen=True, slots=True)
 class NewCombat:
     combat_id: str
-    owner_user_id: int
-    mode: str
+    match: Match
     worker_slot: int
     setup: dict[str, Any]
     seed: int
@@ -29,8 +29,7 @@ class NewCombat:
 @dataclass(frozen=True, slots=True)
 class StoredCombat:
     combat_id: str
-    owner_user_id: int
-    mode: str
+    match: Match
     status: str
     worker_slot: int
     setup: dict[str, Any]
@@ -73,19 +72,27 @@ class CombatStore:
         self._sessions = sessions
 
     async def create(self, combat: NewCombat) -> None:
+        """The combat row and its seats, in one transaction."""
+        match, key = combat.match, uuid.UUID(combat.combat_id)
         async with self._sessions() as session:
             session.add(
                 Combat(
-                    combat_id=uuid.UUID(combat.combat_id),
-                    owner_user_id=combat.owner_user_id,
-                    mode=combat.mode,
+                    combat_id=key,
+                    owner_user_id=match.owner_user_id,
+                    mode=match.mode,
                     status=ACTIVE,
                     worker_slot=combat.worker_slot,
                     setup=combat.setup,
                     seed=combat.seed,
                     content_hash=combat.content_hash,
                     rules_version=combat.rules_version,
+                    activation_timer_s=match.timer_s,
                 )
+            )
+            await session.flush()  # the seats reference the combat row
+            session.add_all(
+                CombatSeat(combat_id=key, side=s.side, user_id=s.user_id, name=s.name)
+                for s in match.seats
             )
             await session.commit()
 
@@ -168,16 +175,18 @@ class CombatStore:
             await session.commit()
             return result.rowcount or 0
 
-    async def active_for_owner(
-        self, owner_user_id: int, mode: str
-    ) -> CombatSummary | None:
-        found = await self.list_for_owner(owner_user_id, status=ACTIVE, mode=mode)
+    async def active_for_user(self, user_id: int, mode: str) -> CombatSummary | None:
+        found = await self.list_for_user(user_id, status=ACTIVE, mode=mode)
         return found[0] if found else None
 
-    async def list_for_owner(
-        self, owner_user_id: int, *, status: str | None = None, mode: str | None = None
+    async def list_for_user(
+        self, user_id: int, *, status: str | None = None, mode: str | None = None
     ) -> list[CombatSummary]:
-        query = select(Combat).where(Combat.owner_user_id == owner_user_id)
+        """The user's combats, newest first: the ones they own or hold a seat in."""
+        seated = select(CombatSeat.combat_id).where(CombatSeat.user_id == user_id)
+        query = select(Combat).where(
+            or_(Combat.owner_user_id == user_id, Combat.combat_id.in_(seated))
+        )
         if status is not None:
             query = query.where(Combat.status == status)
         if mode is not None:
@@ -187,6 +196,18 @@ class CombatStore:
                 await session.scalars(query.order_by(Combat.created_at.desc()))
             ).all()
             return [CombatSummary.of(c) for c in rows]
+
+    async def participants(self, combat_id: str) -> frozenset[int]:
+        """Everyone seated in the combat, plus its owner."""
+        key = uuid.UUID(combat_id)
+        async with self._sessions() as session:
+            combat = await session.get(Combat, key)
+            if combat is None:
+                return frozenset()
+            seated = await session.scalars(
+                select(CombatSeat.user_id).where(CombatSeat.combat_id == key)
+            )
+            return frozenset({combat.owner_user_id, *seated})
 
     async def summary(self, combat_id: str) -> CombatSummary | None:
         """One combat's row without its record (ownership and status checks)."""
@@ -225,10 +246,21 @@ async def _stored(session: AsyncSession, combat: Combat) -> StoredCombat:
             .order_by(CombatAction.seq)
         )
     ).all()
+    seats = (
+        await session.scalars(
+            select(CombatSeat)
+            .where(CombatSeat.combat_id == combat.combat_id)
+            .order_by(CombatSeat.side)
+        )
+    ).all()
     return StoredCombat(
         combat_id=str(combat.combat_id),
-        owner_user_id=combat.owner_user_id,
-        mode=combat.mode,
+        match=Match(
+            combat.owner_user_id,
+            combat.mode,
+            tuple(Seat(s.side, s.user_id, s.name) for s in seats),
+            combat.activation_timer_s,
+        ),
         status=combat.status,
         worker_slot=combat.worker_slot,
         setup=combat.setup,

@@ -7,7 +7,7 @@ the code receives its dependencies instead of constructing them.
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,10 +15,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api import auth, combats, health, world
+from app.api import auth, combats, health, rooms, world
 from app.combat.ground.ruleset import CombatRuleset, load_ruleset
 from app.combat.ground.deployment import load_battle_map
 from app.persistence.combat_repo import CombatStore
+from app.lobby.service import SWEEP_INTERVAL_S as ROOM_SWEEP_INTERVAL_S
+from app.lobby.service import RoomService
+from app.lobby.store import MemoryRoomStore
 from app.services.combat_backend import CombatBackend, ProcessBackend
 from app.services.combat_router import CombatRouter
 from app.services.custom_battles import CustomBattles
@@ -101,6 +104,15 @@ async def _cleanup_refresh_tokens(auth: AuthComponents) -> None:
             log.exception("refresh-token cleanup failed")
 
 
+async def _every(interval_s: float, job: Callable[[], Awaitable[None]]) -> None:
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            await job()
+        except Exception:  # keep the loop alive; the next run retries
+            log.exception("periodic job failed")
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -140,14 +152,31 @@ def create_app(
         await backend.start()
         app.state.combat_store = store
         app.state.combat_router = CombatRouter(backend, store)
+        users = UserStore(sessions)
+
+        async def user_name(user_id: int) -> str:
+            user = await users.get(user_id)
+            return user.username if user is not None else f"#{user_id}"
+
+        app.state.rooms = RoomService(
+            store=MemoryRoomStore(),
+            ruleset=ruleset,
+            battle_map=app.state.custom_battles.room_map,
+            combats=app.state.combat_router,
+            user_name=user_name,
+            clock=time,
+        )
 
         app.state.ws_watchdog = ws_gateway.Watchdog(time)
         watchdog = asyncio.create_task(app.state.ws_watchdog.run())
         cleanup = asyncio.create_task(_cleanup_refresh_tokens(app.state.auth))
+        room_sweeper = asyncio.create_task(
+            _every(ROOM_SWEEP_INTERVAL_S, app.state.rooms.sweep)
+        )
         try:
             yield
         finally:
-            for task in (cleanup, watchdog):
+            for task in (cleanup, watchdog, room_sweeper):
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
@@ -157,7 +186,7 @@ def create_app(
 
     app = FastAPI(title="tg-stonks", lifespan=lifespan)
     install_error_handlers(app)
-    for module in (health, auth, world, combats):
+    for module in (health, auth, world, combats, rooms):
         app.include_router(module.router, prefix="/api")
     app.include_router(ws_gateway.router)  # /ws
     # The built client (npm run build), same origin as /api. Mounted last so it never

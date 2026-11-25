@@ -4,6 +4,7 @@ import random
 
 import pytest
 
+from app.combat.match import Match
 from app.combat.ground.actions import Attack, Move, Skip, UseAbility, Wait
 from app.combat.ground.events import log_hash
 from app.combat.ground.serialize import (
@@ -23,8 +24,7 @@ OWNER = 1
 def _instance(ruleset, seed: int = 7, actions=()) -> CombatInstance:
     return CombatInstance(
         "c-1",
-        OWNER,
-        "hotseat",
+        Match.hotseat(OWNER, (0, 1)),
         ruleset,
         load_demo_setup(ruleset),
         seed,

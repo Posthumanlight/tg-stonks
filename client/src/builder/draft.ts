@@ -142,12 +142,21 @@ export function dropIssue(
   );
 }
 
+/** Which of the draft's sides are checked, and the room's points limit (online rooms
+ * check only the player's own side; 0 or absent = no limit). */
+export interface IssueScope {
+  readonly sides?: readonly number[];
+  readonly pointsLimit?: number;
+}
+
 /** Everything the server would reject, in its order: side-wide checks, then each unit
  * in setup order (side 0's units, then side 1's) against the units placed before it. */
-export function draftIssues(template: BuilderView, draft: Draft): Issue[] {
+export function draftIssues(template: BuilderView, draft: Draft, scope: IssueScope = {}): Issue[] {
   const issues: Issue[] = [];
   const limit = template.limits.max_units_per_side;
+  const checked = (side: number) => !scope.sides || scope.sides.includes(side);
   draft.sides.forEach((setup, side) => {
+    if (!checked(side)) return;
     if (!factionCard(template, setup.faction)) issues.push({ side, unit: null, reason: "setup.unknown_faction" });
     if (setup.units.length === 0) issues.push({ side, unit: null, reason: "setup.empty_side" });
     if (setup.units.length > limit) issues.push({ side, unit: null, reason: "setup.too_many_units" });
@@ -160,10 +169,17 @@ export function draftIssues(template: BuilderView, draft: Draft): Issue[] {
       const size = card?.footprint ?? 1;
       const reason = unitIssue(template, setup, unit, card) ??
         placementIssue(template.board, passable, unit.origin, size, taken, zoneFor(template.zones, side));
-      if (reason) issues.push({ side, unit: index, reason });
+      if (reason && checked(side)) issues.push({ side, unit: index, reason });
       for (const s of footprint(unit.origin, size)) taken.add(squareKey(s));
     }),
   );
+  if (scope.pointsLimit) {
+    draft.sides.forEach((setup, side) => {
+      if (checked(side) && sidePoints(template, setup) > (scope.pointsLimit ?? 0)) {
+        issues.push({ side, unit: null, reason: "setup.over_points" });
+      }
+    });
+  }
   return issues;
 }
 

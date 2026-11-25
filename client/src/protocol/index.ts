@@ -27,6 +27,7 @@ export interface ProtocolModels {
   CombatSummaryView: CombatSummaryView;
   CombatUpdate: CombatUpdate;
   CombatView: CombatView;
+  CreateRoomRequest: CreateRoomRequest;
   CustomCombatRequest: CustomCombatRequest;
   DeployZone: DeployZone;
   DeployedUnit: DeployedUnit;
@@ -39,16 +40,34 @@ export interface ProtocolModels {
   HealthView: HealthView;
   HelloMessage: HelloMessage;
   HelloPayload: HelloPayload;
+  JoinByCodeRequest: JoinByCodeRequest;
   LinkView: LinkView;
   LoginRequest: LoginRequest;
   ModelRange: ModelRange;
   MoveIntent: MoveIntent;
   MoveOptionView: MoveOptionView;
+  MyRoom: MyRoom;
   OutcomeView: OutcomeView;
   OverlayView: OverlayView;
   PingMessage: PingMessage;
+  PlayerView: PlayerView;
   PongMessage: PongMessage;
   RegisterRequest: RegisterRequest;
+  RoomCard: RoomCard;
+  RoomClosed: RoomClosed;
+  RoomClosedMessage: RoomClosedMessage;
+  RoomJoined: RoomJoined;
+  RoomList: RoomList;
+  RoomPlayer: RoomPlayer;
+  RoomPresets: RoomPresets;
+  RoomReady: RoomReady;
+  RoomRef: RoomRef;
+  RoomStarted: RoomStarted;
+  RoomStartedMessage: RoomStartedMessage;
+  RoomStateMessage: RoomStateMessage;
+  RoomSubscribeMessage: RoomSubscribeMessage;
+  RoomUnsubscribeMessage: RoomUnsubscribeMessage;
+  RoomView: RoomView;
   SetupErrorRef: SetupErrorRef;
   SideSetup: SideSetup;
   SkipIntent: SkipIntent;
@@ -136,13 +155,23 @@ export interface AuthRefreshPayload {
   access_token: string;
 }
 /**
- * Sent once with a snapshot: terrain never changes during a combat.
+ * Sent once with a snapshot: terrain and seats never change during a combat.
  */
 export interface BoardView {
   factions?: string[] | null;
   height: number;
+  players?: PlayerView[] | null;
   terrain: string[];
   width: number;
+}
+/**
+ * Who holds a side. The client compares `user_id` with its own to know which
+ * sides it may act for.
+ */
+export interface PlayerView {
+  name: string;
+  side: number;
+  user_id: number;
 }
 export interface BuilderLimits {
   max_units_per_side: number;
@@ -152,6 +181,7 @@ export interface BuilderView {
   defaults: CustomCombatRequest;
   factions: FactionCard[];
   limits: BuilderLimits;
+  rooms: RoomPresets;
   terrain: {
     [k: string]: TerrainCard | undefined;
   };
@@ -197,12 +227,21 @@ export interface ModelRange {
   max: number;
   min: number;
 }
-export interface TerrainCard {
-  passable: boolean;
+/**
+ * What a host may choose for an online room, and where each side deploys.
+ */
+export interface RoomPresets {
+  default_timer_s: number;
+  points_presets: number[];
+  timer_presets: number[];
+  zones: DeployZone[] | null;
 }
 export interface DeployZone {
   rects: [number, number, number, number][];
   side: number;
+}
+export interface TerrainCard {
+  passable: boolean;
 }
 export interface ClusterView {
   code: string;
@@ -231,6 +270,7 @@ export interface CombatEventsMessage {
  */
 export interface CombatUpdate {
   combat_id: string;
+  deadline_ms?: number | null;
   events: CombatEvent[];
   from_seq: number;
   legal: CombatLegal | null;
@@ -307,6 +347,7 @@ export interface StatusView {
 }
 export interface CombatSnapshot {
   board: BoardView;
+  deadline_ms?: number | null;
   legal: CombatLegal | null;
   view: CombatView;
 }
@@ -319,6 +360,12 @@ export interface CombatSummaryView {
   created_at: string;
   mode: string;
   status: string;
+}
+export interface CreateRoomRequest {
+  name: string;
+  points_limit: number;
+  private?: boolean;
+  timer_s: number;
 }
 /**
  * Every HTTP error: an i18n reason key and an optional developer detail.
@@ -388,9 +435,19 @@ export interface HelloPayload {
   access_token: string;
   protocol_version: number;
 }
+export interface JoinByCodeRequest {
+  code: string;
+}
 export interface LoginRequest {
   password: string;
   username: string;
+}
+export interface MyRoom {
+  room: RoomJoined | null;
+}
+export interface RoomJoined {
+  code: string;
+  room_id: string;
 }
 export interface PingMessage {
   id?: string | null;
@@ -403,6 +460,82 @@ export interface PongMessage {
 export interface RegisterRequest {
   password: string;
   username: string;
+}
+/**
+ * One open public room in search results.
+ */
+export interface RoomCard {
+  host_name: string;
+  name: string;
+  points_limit: number;
+  room_id: string;
+  timer_s: number;
+}
+export interface RoomClosed {
+  reason: string;
+  room_id: string;
+}
+export interface RoomClosedMessage {
+  payload: RoomClosed;
+  type: "room.closed";
+}
+export interface RoomList {
+  rooms: RoomCard[];
+}
+export interface RoomPlayer {
+  connected: boolean;
+  faction: string | null;
+  name: string;
+  points: number | null;
+  ready: boolean;
+  side: number;
+  unit_count: number | null;
+  user_id: number;
+}
+export interface RoomReady {
+  combat_id: string | null;
+}
+export interface RoomRef {
+  room_id: string;
+}
+export interface RoomStarted {
+  combat_id: string;
+  room_id: string;
+}
+export interface RoomStartedMessage {
+  payload: RoomStarted;
+  type: "room.started";
+}
+export interface RoomStateMessage {
+  payload: RoomView;
+  type: "room.state";
+}
+export interface RoomView {
+  code: string;
+  host_user_id: number;
+  name: string;
+  players: RoomPlayer[];
+  points_limit: number;
+  private: boolean;
+  room_id: string;
+  status: string;
+  timer_s: number;
+  your_army: SideSetup | null;
+  your_side: number;
+}
+/**
+ * Watch your room: `room.state` now and on every change. Open subscriptions are
+ * your presence in the room.
+ */
+export interface RoomSubscribeMessage {
+  id?: string | null;
+  payload: RoomRef;
+  type: "room.subscribe";
+}
+export interface RoomUnsubscribeMessage {
+  id?: string | null;
+  payload: RoomRef;
+  type: "room.unsubscribe";
 }
 export interface SubscribeMessage {
   id?: string | null;
@@ -441,4 +574,4 @@ export interface WelcomePayload {
   user_id: number;
 }
 
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;

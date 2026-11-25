@@ -18,7 +18,7 @@ from app.shared.clock import SystemClock
 from app.shared.dispatch import Dispatcher
 from app.shared.errors import GameError
 from app.workers import ipc
-from app.workers.combat_host import CombatHost
+from app.workers.combat_host import TIMER_TICK_S, CombatHost
 
 log = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def build_dispatcher(host: CombatHost) -> Dispatcher[None]:
 
     @dispatcher.on("create")
     async def create(_: None, msg: ipc.Create) -> dict:
-        return await host.create(msg.combat_id, msg.owner_user_id, msg.mode, msg.setup)
+        return await host.create(msg.combat_id, msg.match(), msg.setup)
 
     @dispatcher.on("intent")
     async def intent(_: None, msg: ipc.Intent) -> None:
@@ -58,6 +58,10 @@ def build_dispatcher(host: CombatHost) -> Dispatcher[None]:
     @dispatcher.on("subscribe")
     async def subscribe(_: None, msg: ipc.Subscribe) -> dict:
         return await host.subscribe(msg.combat_id, msg.user_id, msg.last_seq)
+
+    @dispatcher.on("concede")
+    async def concede(_: None, msg: ipc.Concede) -> None:
+        await host.concede(msg.combat_id, msg.user_id)
 
     @dispatcher.on("close")
     async def close(_: None, msg: ipc.Close) -> None:
@@ -102,6 +106,7 @@ async def serve(config: WorkerConfig) -> None:
     tasks = [
         asyncio.create_task(host.writes.run()),
         asyncio.create_task(_every(SWEEP_INTERVAL_S, host.sweep)),
+        asyncio.create_task(_every(TIMER_TICK_S, host.tick)),
         asyncio.create_task(_every(LOAD_REPORT_INTERVAL_S, report_load)),
     ]
     dispatcher = build_dispatcher(host)

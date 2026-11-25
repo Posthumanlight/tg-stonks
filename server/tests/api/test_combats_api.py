@@ -103,7 +103,7 @@ async def test_custom_battle_errors_are_located(test_app: TestApp) -> None:
         "/api/combats/custom", json=request, headers=headers
     )
     assert response.json()["reason_key"] == "request.invalid"
-    assert await test_app.app.state.combat_store.list_for_owner(1) == []
+    assert await test_app.app.state.combat_store.list_for_user(1) == []
 
 
 async def test_one_active_battle_then_abandon(test_app: TestApp) -> None:

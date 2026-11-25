@@ -64,7 +64,7 @@ async def abandon(
 async def list_combats(
     request: Request, principal: Principal = Depends(current_user)
 ) -> list[CombatSummaryView]:
-    summaries = await request.app.state.combat_store.list_for_owner(principal.user_id)
+    summaries = await request.app.state.combat_store.list_for_user(principal.user_id)
     return [
         CombatSummaryView(
             combat_id=s.combat_id,

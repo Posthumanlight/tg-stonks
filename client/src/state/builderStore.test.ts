@@ -8,20 +8,21 @@ import { type BuilderApi, type DraftStorage, createBuilderStore } from "./builde
 
 function setup(options: { saved?: unknown; view?: BuilderView; api?: Partial<BuilderApi> } = {}) {
   const view = options.view ?? builderView();
-  let saved: unknown = options.saved ?? null;
+  const drafts = new Map<string, unknown>([["hotseat", options.saved ?? null]]);
   const storage: DraftStorage = {
-    load: () => saved,
-    save: (draft: Draft | null) => {
-      saved = draft;
+    load: (key: string) => drafts.get(key) ?? null,
+    save: (key: string, draft: Draft | null) => {
+      drafts.set(key, draft);
     },
   };
+  const saved = (key = "hotseat") => drafts.get(key) ?? null;
   const api: BuilderApi = {
     getBuilder: vi.fn(async () => view),
     createCustom: vi.fn(async () => ({ combat_id: "c1" })),
     ...options.api,
   };
   const store = createBuilderStore(api, storage);
-  return { store, api, view, saved: () => saved };
+  return { store, api, view, saved };
 }
 
 describe("loading", () => {
@@ -149,5 +150,52 @@ describe("start", () => {
     expect(await store.start()).toBeNull();
     expect(store.conflict.value).toBe(true);
     expect(store.serverIssue.value).toBeNull();
+  });
+});
+
+describe("room mode", () => {
+  it("edits only the player's side, inside its zone and the points limit", async () => {
+    const { store, saved } = setup();
+    await store.enterRoom({ side: 1, pointsLimit: 200, army: null });
+    expect(store.activeSide.value).toBe(1);
+    expect(store.view.value?.zones).toEqual(store.view.value?.rooms.zones); // the room zones
+    expect(store.draft.value?.sides[0]?.units).toEqual([]); // the opponent's side stays hidden
+    expect(store.draft.value?.sides[1]?.units).toHaveLength(1); // the defaults for side 1
+    expect(store.issues.value).toEqual([]); // side 0 (empty) isn't checked
+    store.setActiveSide(0);
+    expect(store.activeSide.value).toBe(1);
+
+    store.beginDrag({ kind: "roster", unitType: "ravager_swarm" });
+    store.endDrag({ kind: "square", square: [2, 2] }); // outside side 1's rows (4-5)
+    expect(store.notice.value).toBe("setup.outside_zone");
+    store.beginDrag({ kind: "roster", unitType: "ravager_swarm" });
+    store.endDrag({ kind: "square", square: [2, 4] });
+    store.beginDrag({ kind: "roster", unitType: "ravager_swarm" });
+    store.endDrag({ kind: "square", square: [4, 4] });
+    expect(store.issues.value).toEqual([{ side: 1, unit: null, reason: "setup.over_points" }]); // 240 > 200
+    expect(store.canStart.value).toBe(false);
+    expect(saved("room1")).toEqual(store.draft.value); // its own saved draft
+    expect(saved("hotseat")).toBeNull();
+  });
+
+  it("a locked (ready) army can't change; exiting restores the hotseat draft", async () => {
+    const { store } = setup();
+    await store.load();
+    const hotseat = store.draft.value;
+    const army = { faction: "brood", units: [{ unit_type: "ravager_swarm", models: 12, origin: [1, 5] as [number, number] }] };
+    await store.enterRoom({ side: 1, pointsLimit: 0, army });
+    expect(store.locked.value).toBe(true);
+    expect(store.draft.value?.sides[1]).toEqual(army);
+    store.tapSquare([1, 5]);
+    expect(store.selected.value).toBeNull();
+    store.beginDrag({ kind: "token", ref: { side: 1, index: 0 } });
+    expect(store.drag.value.phase).toBe("idle");
+    expect(store.canStart.value).toBe(false);
+    store.setLocked(false);
+    expect(store.canStart.value).toBe(true);
+
+    store.exitRoom();
+    expect(store.mode.value.kind).toBe("hotseat");
+    expect(store.draft.value).toEqual(hotseat);
   });
 });

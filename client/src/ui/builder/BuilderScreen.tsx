@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
 
 import { type Issue, getUnit, unitCard } from "../../builder/draft";
@@ -35,7 +36,7 @@ export function BuilderScreen() {
           </button>
         </div>
       )}
-      {state.status === "ready" && <Dock />}
+      {state.status === "ready" && <Dock footer={<StartBar />} />}
     </>
   );
 }
@@ -71,10 +72,13 @@ function SideTabs() {
   );
 }
 
-function Dock() {
+/** The editing dock: faction, the selected unit, the roster, issues, and `footer` (Start
+ * in hotseat, Ready in a room). A locked army (readied) shows read-only. */
+export function Dock({ footer }: { footer: ComponentChildren }) {
   const view = builder.view.value;
   const draft = builder.draft.value;
   const side = builder.activeSide.value;
+  const locked = builder.locked.value;
   if (!view || !draft) return null;
   const current = draft.sides[side];
 
@@ -92,7 +96,7 @@ function Dock() {
       <div class="row">
         <label class="faction-picker">
           <span class="muted">{t("builder.faction")}</span>
-          <select value={current?.faction} onChange={changeFaction}>
+          <select value={current?.faction} onChange={changeFaction} disabled={locked}>
             {view.factions.map((f) => (
               <option key={f.id} value={f.id}>
                 {tKey(f.name_key)}
@@ -100,12 +104,12 @@ function Dock() {
             ))}
           </select>
         </label>
-        <Hint />
+        {locked ? <span class="muted">{t("room.locked_hint")}</span> : <Hint />}
       </div>
-      <DeployPanel />
-      <RosterTray />
+      {!locked && <DeployPanel />}
+      {!locked && <RosterTray />}
       <Issues />
-      <StartBar />
+      {footer}
     </section>
   );
 }

@@ -42,6 +42,15 @@ export function builderView(overrides: Partial<BuilderView> = {}): BuilderView {
         { faction: "brood", units: [{ unit_type: "ravager_swarm", models: 20, origin: [7, 5] }] },
       ],
     },
+    rooms: {
+      points_presets: [200, 0],
+      timer_presets: [45, 0],
+      default_timer_s: 45,
+      zones: [
+        { side: 0, rects: [[0, 0, 8, 2]] }, // top two rows
+        { side: 1, rects: [[0, 4, 8, 2]] }, // bottom two rows
+      ],
+    },
     ...overrides,
   };
 }

@@ -1,6 +1,9 @@
 // Combat screen state as signals, fed by WebSocket pushes (docs/client.md "Combat").
 // The server's `view` replaces local state wholesale and `legal` lists every option:
 // there are no rules here (CLAUDE.md rule 1). Events only feed the log.
+//
+// Online battles: `board.players` says who holds each side; the player acts (and sees
+// highlights) only on their own side's activations, against the server's deadline.
 import { batch, computed, signal } from "@preact/signals";
 
 import {
@@ -41,7 +44,10 @@ export interface CombatApi {
 const reasonOf = (error: unknown): string =>
   error instanceof WsError ? error.reasonKey : "error.generic";
 
-export function createCombatStore(transport: CombatTransport, api: CombatApi) {
+/** The signed-in user's id (read inside computeds, so it may be a signal read). */
+export type CurrentUserId = () => number | null;
+
+export function createCombatStore(transport: CombatTransport, api: CombatApi, me: CurrentUserId = () => null) {
   const combatId = signal<string | null>(null);
   const board = signal<BoardView | null>(null);
   const view = signal<CombatView | null>(null);
@@ -52,6 +58,8 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
   const lastError = signal<string | null>(null);
   const connection = signal(transport.status);
   const busy = signal(false);
+  /** When the active unit's timer runs out (epoch ms); null: untimed. */
+  const deadline = signal<number | null>(null);
 
   /** The unit the side panel shows: the tapped one, else the active one. */
   const shownUnit = computed(() => {
@@ -63,11 +71,33 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
     const current = view.value;
     return current?.units.find((u) => u.uid === current.active?.uid) ?? null;
   });
-  const marks = computed(() => highlights(legal.value, mode.value));
+  /** Sides this user holds. Hotseat (or a record without seats): every side. */
+  const mySides = computed<readonly number[] | null>(() => {
+    const players = board.value?.players;
+    if (!players) return null;
+    const user = me();
+    return players.filter((p) => p.user_id === user).map((p) => p.side);
+  });
+  /** Someone else holds a side: an online battle. */
+  const online = computed(() => (board.value?.players ?? []).some((p) => p.user_id !== me()));
+  const myTurn = computed(() => {
+    const unit = activeUnit.value;
+    const sides = mySides.value;
+    return unit !== null && (sides === null || sides.includes(unit.side));
+  });
+  /** Player names per side in an online battle (labels); undefined in hotseat. */
+  const sideNames = computed<readonly string[] | undefined>(() => {
+    if (!online.value) return undefined;
+    const names: string[] = [];
+    for (const p of board.value?.players ?? []) names[p.side] = p.name;
+    return names;
+  });
+  const marks = computed(() => highlights(myTurn.value ? legal.value : null, mode.value));
 
   function reset(): void {
     batch(() => {
       board.value = view.value = legal.value = null;
+      deadline.value = null;
       log.value = [];
       mode.value = MOVE_MODE;
       inspected.value = lastError.value = null;
@@ -81,6 +111,7 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
       board.value = snapshot.board;
       view.value = snapshot.view;
       legal.value = snapshot.legal;
+      deadline.value = snapshot.deadline_ms ?? null;
       mode.value = keepMode(mode.peek(), snapshot.legal);
     });
   }
@@ -97,6 +128,7 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
     batch(() => {
       view.value = update.view;
       legal.value = update.legal;
+      deadline.value = update.deadline_ms ?? null;
       log.value = [...log.peek(), ...fresh].slice(-LOG_LIMIT);
       mode.value = keepMode(mode.peek(), update.legal);
     });
@@ -162,7 +194,8 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
   }
 
   function tap(square: Square): void {
-    const result = tapResult(square, legal.peek(), mode.peek(), view.peek()?.units ?? []);
+    const options = myTurn.peek() ? legal.peek() : null; // the opponent's turn: look only
+    const result = tapResult(square, options, mode.peek(), view.peek()?.units ?? []);
     switch (result.kind) {
       case "intent":
         void act(result.intent);
@@ -213,8 +246,13 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
     lastError,
     connection,
     busy,
+    deadline,
     shownUnit,
     activeUnit,
+    mySides,
+    online,
+    myTurn,
+    sideNames,
     marks,
     open,
     openDemo,

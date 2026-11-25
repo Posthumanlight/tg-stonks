@@ -13,13 +13,21 @@ export function unitLabel(units: readonly UnitView[], uid: unknown): string {
 /** Faction id per side (BoardView.factions); null/empty for records without factions. */
 export type Factions = readonly string[] | null | undefined;
 
+/** Player name per side in an online battle; undefined in hotseat. */
+export type Names = readonly (string | undefined)[] | undefined;
+
 /** A side's name: its faction ("Concord"), numbered in a mirror match ("Concord 2"),
- * else "Side 1" for side 0 (0-based on the wire, 1-based for people). */
-export function sideLabel(side: number, factions?: Factions): string {
+ * else "Side 1" for side 0 (0-based on the wire, 1-based for people). Online, the
+ * player's name leads ("ada · Concord"). */
+export function sideLabel(side: number, factions?: Factions, names?: Names): string {
   const faction = factions?.[side];
-  if (!faction) return tKey("combat.side", { n: side + 1 });
-  const name = tKey(`faction.${faction}.name`);
-  return factions.filter((f) => f === faction).length > 1 ? `${name} ${side + 1}` : name;
+  let label = tKey("combat.side", { n: side + 1 });
+  if (faction) {
+    const name = tKey(`faction.${faction}.name`);
+    label = factions.filter((f) => f === faction).length > 1 ? `${name} ${side + 1}` : name;
+  }
+  const player = names?.[side];
+  return player ? `${player} · ${label}` : label;
 }
 
 const square = (value: unknown): string =>
@@ -32,6 +40,7 @@ export function formatEvent(
   event: CombatEvent,
   units: readonly UnitView[],
   factions?: Factions,
+  names?: Names,
 ): string | null {
   const d = event.data;
   const unit = (key: string) => unitLabel(units, d[key]);
@@ -88,15 +97,20 @@ export function formatEvent(
         ability: tKey(`ability.${String(d["ability"])}.name`),
       });
     case "combat_ended":
-      return outcomeText(Boolean(d["draw"]), (d["winners"] as number[] | undefined) ?? [], factions);
+      return outcomeText(Boolean(d["draw"]), (d["winners"] as number[] | undefined) ?? [], factions, names);
     default:
       return null;
   }
 }
 
 /** "Side 2 wins." / "Draw." — shared by the log and the outcome dialog. */
-export function outcomeText(draw: boolean, winners: readonly number[], factions?: Factions): string {
+export function outcomeText(
+  draw: boolean,
+  winners: readonly number[],
+  factions?: Factions,
+  names?: Names,
+): string {
   if (draw || winners.length === 0) return tKey("combat.outcome.draw");
-  const sides = winners.map((side) => sideLabel(side, factions)).join(", ");
+  const sides = winners.map((side) => sideLabel(side, factions, names)).join(", ");
   return tKey("combat.outcome.winners", { sides });
 }

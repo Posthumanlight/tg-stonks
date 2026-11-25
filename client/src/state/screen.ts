@@ -1,7 +1,7 @@
 // Which top-level screen is shown (docs/client.md "Screens").
 import { signal } from "@preact/signals";
 
-export type Screen = "boot" | "login" | "lobby" | "galaxy" | "builder" | "combat";
+export type Screen = "boot" | "login" | "lobby" | "galaxy" | "builder" | "rooms" | "room" | "combat";
 
 export const screen = signal<Screen>("boot");
 

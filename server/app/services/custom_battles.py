@@ -19,10 +19,11 @@ from app.shared.errors import from_setup_error
 class CustomBattles:
     def __init__(self, ruleset: CombatRuleset, battle_map: BattleMap) -> None:
         self._ruleset = ruleset
-        self._map = battle_map
-        self.builder = StaticJson.of(builder_view(ruleset, battle_map))
+        self._map = battle_map.free()  # hotseat deploys anywhere; rooms use the zones
+        self.room_map = battle_map
+        self.builder = StaticJson.of(builder_view(ruleset, self._map, battle_map))
         self.default_setup = setup_to_json(
-            deploy(ruleset, battle_map, battle_map.defaults)
+            deploy(ruleset, self._map, self._map.defaults)
         )
 
     def setup_for(self, request: CustomCombatRequest) -> dict[str, Any]:

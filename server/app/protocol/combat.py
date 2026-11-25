@@ -3,6 +3,7 @@ engine state; the gateway forwards the JSON untouched. The client renders state 
 `CombatView` and uses events only for animation and the log — no rules on the client.
 """
 
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import Field
@@ -16,8 +17,17 @@ from app.protocol.base import ProtocolModel
 Pair = tuple[int, int]
 
 
+class PlayerView(ProtocolModel):
+    """Who holds a side. The client compares `user_id` with its own to know which
+    sides it may act for."""
+
+    side: int
+    user_id: int
+    name: str  # "" in hotseat (the labels use the faction then)
+
+
 class BoardView(ProtocolModel):
-    """Sent once with a snapshot: terrain never changes during a combat."""
+    """Sent once with a snapshot: terrain and seats never change during a combat."""
 
     width: int
     height: int
@@ -25,6 +35,7 @@ class BoardView(ProtocolModel):
     factions: list[str] | None = (
         None  # faction id per side (side labels); null: unknown
     )
+    players: list[PlayerView] | None = None  # null outside a combat (the builder)
 
 
 class GroupView(ProtocolModel):
@@ -127,6 +138,7 @@ class CombatSnapshot(ProtocolModel):
     board: BoardView
     view: CombatView
     legal: CombatLegal | None
+    deadline_ms: int | None = None  # the activation timer's end (epoch ms); null: none
 
 
 class CombatUpdate(ProtocolModel):
@@ -137,6 +149,7 @@ class CombatUpdate(ProtocolModel):
     events: list[CombatEvent]
     view: CombatView
     legal: CombatLegal | None
+    deadline_ms: int | None = None  # the activation timer's end (epoch ms); null: none
 
 
 # --- client intents --------------------------------------------------------------------
@@ -180,13 +193,18 @@ class CombatIntentEnvelope(ProtocolModel):
 # --- converters (pure) -----------------------------------------------------------------
 
 
-def board_view(state: CombatState, factions: tuple[str, ...] = ()) -> BoardView:
+def board_view(
+    state: CombatState,
+    factions: tuple[str, ...] = (),
+    players: Sequence[PlayerView] | None = None,
+) -> BoardView:
     board = state.board
     return BoardView(
         width=board.width,
         height=board.height,
         terrain=list(board.terrain),
         factions=list(factions) or None,
+        players=list(players) if players is not None else None,
     )
 
 

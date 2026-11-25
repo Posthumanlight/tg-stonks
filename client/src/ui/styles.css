@@ -432,3 +432,138 @@ button.selected {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+
+/* --- lobby rooms (docs/client.md "Lobby rooms") ------------------------------------ */
+
+.screen-center .card h2 {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.rooms-panel {
+  max-width: 480px;
+  max-height: calc(100dvh - 32px - var(--safe-top) - var(--safe-bottom));
+  overflow-y: auto;
+}
+
+.rooms-panel hr {
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.row.wrap {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  align-items: flex-end;
+}
+
+/* Text inputs and selects outside `.field` (search, codes, filters) share its look. */
+.field select,
+.row input,
+.row select {
+  min-height: var(--tap);
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #0b1222;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px; /* no iOS zoom-on-focus */
+}
+
+.row input {
+  flex: 1 1 8em;
+  user-select: text;
+}
+
+.row input:focus,
+.row select:focus,
+.field select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: var(--tap);
+}
+
+.room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.room-card strong {
+  overflow-wrap: anywhere;
+}
+
+.builder-top p {
+  margin: 0;
+  font-size: 12px;
+}
+
+.builder-top .opponent {
+  gap: 6px;
+  font-size: 13px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.builder-top .opponent > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.builder-top .opponent > button,
+.builder-top .opponent > .side-dot {
+  flex-shrink: 0; /* Kick stays readable; names and status give way */
+}
+
+.room-meta {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+button.code {
+  min-height: 30px;
+  padding: 0 8px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+}
+
+.timer {
+  margin-left: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.topbar h1 {
+  white-space: nowrap;
+}
+
+.timer.urgent {
+  color: var(--accent);
+  font-weight: 600;
+}

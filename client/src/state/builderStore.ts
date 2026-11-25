@@ -1,12 +1,17 @@
 // The custom-battle builder's state and actions (docs/client.md "Custom battle screen").
 // A factory over an injected API and draft storage, so tests drive it without a server;
 // state/builder.ts wires the real ones. The rules it applies are hints: the server
-// validates the whole setup on Start.
+// validates the whole setup on Start (or on Ready, in a room).
+//
+// Two modes share everything (scene, roster, drag and drop): `hotseat` edits both sides
+// on the whole board; `room` edits only the player's side, inside its deployment zone
+// and the room's points limit, and the opponent's side stays empty (hidden).
 import { batch, computed, signal } from "@preact/signals";
 
 import {
   type Draft,
   type Issue,
+  type IssueScope,
   type UnitRef,
   dropIssue,
   draftIssues,
@@ -25,17 +30,41 @@ import {
 import { type DragSource, type DragState, type DropTarget, IDLE, begin, hover, pick, release } from "../builder/drag";
 import type { Square } from "../builder/placement";
 import { ApiError } from "../net/http";
-import type { BuilderView, CombatCreated, CustomCombatRequest } from "../protocol";
+import type { BuilderView, CombatCreated, CustomCombatRequest, SideSetup } from "../protocol";
 
 export interface BuilderApi {
   getBuilder(): Promise<BuilderView>;
   createCustom(body: CustomCombatRequest): Promise<CombatCreated>;
 }
 
-/** Where the draft survives a reload (per device). Failures must not throw. */
+/** Where drafts survive a reload (per device), one per `key` (the mode, and a room
+ * side). Failures must not throw. */
 export interface DraftStorage {
-  load(): unknown;
-  save(draft: Draft | null): void;
+  load(key: string): unknown;
+  save(key: string, draft: Draft | null): void;
+}
+
+export type BuilderMode =
+  | { readonly kind: "hotseat" }
+  | { readonly kind: "room"; readonly side: number; readonly pointsLimit: number };
+
+/** Entering a room: the player's side, the room's limit, and their locked army if they
+ * had already readied (a reconnect). */
+export interface RoomEntry {
+  readonly side: number;
+  readonly pointsLimit: number;
+  readonly army: SideSetup | null;
+}
+
+const HOTSEAT: BuilderMode = { kind: "hotseat" };
+
+const storageKey = (mode: BuilderMode): string => (mode.kind === "room" ? `room${mode.side}` : "hotseat");
+
+/** A room draft: the player's side, and the opponent's side kept empty. */
+function roomDraft(template: BuilderView, side: number, mine: SideSetup): Draft {
+  const [a, b] = template.defaults.sides;
+  const hidden = (s: SideSetup): SideSetup => ({ faction: s.faction, units: [] });
+  return { sides: side === 0 ? [mine, hidden(b)] : [hidden(a), mine] };
 }
 
 export type TemplateState =
@@ -73,6 +102,9 @@ function locate(detail: unknown): { side: number | null; unit: number | null } {
 
 export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   const template = signal<TemplateState>({ status: "idle" });
+  const mode = signal<BuilderMode>(HOTSEAT);
+  /** The army is submitted (Ready in a room): no edits until unlocked. */
+  const locked = signal(false);
   const draft = signal<Draft | null>(null);
   const activeSide = signal(0);
   const selected = signal<UnitRef | null>(null);
@@ -84,7 +116,17 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   const conflict = signal(false);
   const starting = signal(false);
 
-  const view = computed(() => (template.value.status === "ready" ? template.value.view : null));
+  const loaded = computed(() => (template.value.status === "ready" ? template.value.view : null));
+  /** The template as this mode sees it: rooms deploy inside the room zones. */
+  const view = computed<BuilderView | null>(() => {
+    const v = loaded.value;
+    if (!v || mode.value.kind === "hotseat") return v;
+    return { ...v, zones: v.rooms.zones };
+  });
+  const scope = computed<IssueScope>(() => {
+    const m = mode.value;
+    return m.kind === "room" ? { sides: [m.side], pointsLimit: m.pointsLimit } : {};
+  });
   const points = computed(() => {
     const v = view.value;
     const d = draft.value;
@@ -93,9 +135,11 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   const issues = computed<Issue[]>(() => {
     const v = view.value;
     const d = draft.value;
-    return v && d ? draftIssues(v, d) : [];
+    return v && d ? draftIssues(v, d, scope.value) : [];
   });
-  const canStart = computed(() => draft.value !== null && issues.value.length === 0 && !starting.value);
+  const canStart = computed(
+    () => draft.value !== null && issues.value.length === 0 && !starting.value && !locked.value,
+  );
   const ghost = computed<Ghost | null>(() => {
     const state = drag.value;
     const v = view.value;
@@ -126,12 +170,13 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   }
 
   function commit(next: Draft): void {
+    if (locked.peek()) return;
     batch(() => {
       draft.value = next;
       serverIssue.value = null;
       notice.value = null;
     });
-    storage.save(next);
+    storage.save(storageKey(mode.peek()), next);
   }
 
   // --- loading -------------------------------------------------------------------------
@@ -142,7 +187,7 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     template.value = { status: "loading" };
     try {
       const fetched = await api.getBuilder();
-      const saved = storage.load();
+      const saved = storage.load(storageKey(HOTSEAT));
       batch(() => {
         draft.value = fitsTemplate(fetched, saved) ? saved : clone(fetched.defaults);
         template.value = { status: "ready", view: fetched };
@@ -152,9 +197,65 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     }
   }
 
+  // --- modes ---------------------------------------------------------------------------
+
+  /** Switch to a room's side. The player's draft for that side comes from their locked
+   * army, else this device's saved room draft, else the defaults. */
+  async function enterRoom(entry: RoomEntry): Promise<void> {
+    await load();
+    const v = loaded.peek();
+    if (!v) return;
+    const next: BuilderMode = { kind: "room", side: entry.side, pointsLimit: entry.pointsLimit };
+    const saved = storage.load(storageKey(next));
+    const savedSide = fitsTemplate(v, saved) ? saved.sides[entry.side] : undefined;
+    const mine =
+      entry.army ??
+      (savedSide && savedSide.units.length > 0 ? savedSide : v.defaults.sides[entry.side]) ??
+      { faction: v.factions[0]?.id ?? "", units: [] };
+    batch(() => {
+      mode.value = next;
+      activeSide.value = entry.side;
+      locked.value = entry.army !== null;
+      draft.value = roomDraft(v, entry.side, structuredClone(mine));
+      leave();
+    });
+  }
+
+  /** Back to the hotseat builder and its own draft. */
+  function exitRoom(): void {
+    if (mode.peek().kind === "hotseat") return;
+    const v = loaded.peek();
+    const saved = storage.load(storageKey(HOTSEAT));
+    batch(() => {
+      mode.value = HOTSEAT;
+      activeSide.value = 0;
+      locked.value = false;
+      draft.value = v ? (fitsTemplate(v, saved) ? saved : clone(v.defaults)) : null;
+      leave();
+    });
+  }
+
+  function setLocked(value: boolean): void {
+    batch(() => {
+      locked.value = value;
+      if (value) {
+        selected.value = null;
+        drag.value = IDLE;
+      }
+    });
+  }
+
+  /** The player's side in a room (null in hotseat). */
+  function roomSide(): number | null {
+    const m = mode.peek();
+    return m.kind === "room" ? m.side : null;
+  }
+
   // --- editing -------------------------------------------------------------------------
 
   function setActiveSide(side: number): void {
+    const own = roomSide();
+    if (own !== null && side !== own) return; // a room shows only the player's side
     batch(() => {
       activeSide.value = side;
       selected.value = null;
@@ -174,7 +275,10 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     const v = view.peek();
     if (!v) return;
     selected.value = null;
-    commit(clone(v.defaults));
+    const own = roomSide();
+    const defaults = clone(v.defaults);
+    const mine = own !== null ? defaults.sides[own] : undefined;
+    commit(own !== null && mine ? roomDraft(v, own, mine) : defaults);
   }
 
   function select(ref: UnitRef | null): void {
@@ -201,6 +305,7 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   // --- gestures ------------------------------------------------------------------------
 
   function beginDrag(source: DragSource): void {
+    if (locked.peek()) return;
     batch(() => {
       if (source.kind === "token") selected.value = source.ref;
       drag.value = begin(source);
@@ -210,6 +315,7 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
 
   /** Tap fallback: pick a card or token up; picking the same one again puts it down. */
   function pickUp(source: DragSource): void {
+    if (locked.peek()) return;
     const current = drag.peek();
     const again =
       current.phase === "picked" &&
@@ -275,7 +381,7 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
   function tapSquare(square: Square): void {
     const v = view.peek();
     const d = draft.peek();
-    if (!v || !d) return;
+    if (!v || !d || locked.peek()) return;
     const hit = unitAtSquare(v, d, square);
     const state = drag.peek();
     const carryingToken = state.phase === "picked" && state.source.kind === "token" ? state.source.ref : null;
@@ -299,7 +405,7 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     const v = view.peek();
     const d = draft.peek();
     const hit = v && d ? unitAtSquare(v, d, square) : null;
-    return hit && hit.side === activeSide.peek() ? hit : null;
+    return hit && hit.side === activeSide.peek() && !locked.peek() ? hit : null;
   }
 
   // --- start ---------------------------------------------------------------------------
@@ -315,23 +421,28 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     });
     try {
       const { combat_id } = await api.createCustom(d);
-      storage.save(null);
+      storage.save(storageKey(HOTSEAT), null);
       return combat_id;
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        conflict.value = true;
-      } else {
-        const { side, unit } = locate(error instanceof ApiError ? error.detail : null);
-        batch(() => {
-          serverIssue.value = { reason: reasonOf(error), side, unit };
-          if (side !== null) setActiveSide(side);
-          if (side !== null && unit !== null) selected.value = { side, index: unit };
-        });
-      }
+      reject(error);
       return null;
     } finally {
       starting.value = false;
     }
+  }
+
+  /** Show the server's refusal of the setup: a 409 conflict, or a located issue. */
+  function reject(error: unknown): void {
+    if (error instanceof ApiError && error.status === 409 && error.reasonKey === "combat.already_active") {
+      conflict.value = true;
+      return;
+    }
+    const { side, unit } = locate(error instanceof ApiError ? error.detail : null);
+    batch(() => {
+      serverIssue.value = { reason: reasonOf(error), side, unit };
+      if (side !== null) setActiveSide(side);
+      if (side !== null && unit !== null) selected.value = { side, index: unit };
+    });
   }
 
   /** Forget the screen's transient state (leaving the builder keeps the draft). */
@@ -347,6 +458,8 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
 
   return {
     template,
+    mode,
+    locked,
     view,
     draft,
     activeSide,
@@ -374,7 +487,11 @@ export function createBuilderStore(api: BuilderApi, storage: DraftStorage) {
     tapSquare,
     draggableAt,
     start,
+    reject,
     leave,
+    enterRoom,
+    exitRoom,
+    setLocked,
   };
 }
 

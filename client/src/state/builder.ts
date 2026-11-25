@@ -5,21 +5,23 @@ import type { Draft } from "../builder/draft";
 import { combatApi } from "../net/api";
 import { type DraftStorage, createBuilderStore } from "./builderStore";
 
-const DRAFT_KEY = "tg-stonks.builder-draft.v1";
+// One entry per mode (and room side); the hotseat key predates rooms.
+const draftKey = (key: string): string =>
+  key === "hotseat" ? "tg-stonks.builder-draft.v1" : `tg-stonks.builder-draft.${key}.v1`;
 
 const draftStorage: DraftStorage = {
-  load(): unknown {
+  load(key: string): unknown {
     try {
-      const raw = window.localStorage.getItem(DRAFT_KEY);
+      const raw = window.localStorage.getItem(draftKey(key));
       return raw ? (JSON.parse(raw) as unknown) : null;
     } catch {
       return null;
     }
   },
-  save(draft: Draft | null): void {
+  save(key: string, draft: Draft | null): void {
     try {
-      if (draft) window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-      else window.localStorage.removeItem(DRAFT_KEY);
+      if (draft) window.localStorage.setItem(draftKey(key), JSON.stringify(draft));
+      else window.localStorage.removeItem(draftKey(key));
     } catch {
       // not saved: the draft just won't survive a reload
     }

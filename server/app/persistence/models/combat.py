@@ -28,7 +28,7 @@ class Combat(Base):
     owner_user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"), index=True
     )
-    mode: Mapped[str] = mapped_column(String(16))  # hotseat (PvP later)
+    mode: Mapped[str] = mapped_column(String(16))  # hotseat | pvp
     status: Mapped[str] = mapped_column(String(16), index=True)
     worker_slot: Mapped[int] = mapped_column(Integer)
     setup: Mapped[dict[str, Any]] = mapped_column(JSON)
@@ -37,6 +37,8 @@ class Combat(Base):
     rules_version: Mapped[int] = mapped_column(Integer)
     outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     status_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Seconds per activation (auto-Skip on expiry); null = untimed (hotseat).
+    activation_timer_s: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -56,3 +58,19 @@ class CombatAction(Base):
     )
     seq: Mapped[int] = mapped_column(Integer, primary_key=True)  # action number, from 0
     action: Mapped[dict[str, Any]] = mapped_column(JSON)
+
+
+class CombatSeat(Base):
+    """Who holds each side. Records without rows (older hotseat ones) read as "the
+    owner holds every side"."""
+
+    __tablename__ = "combat_seats"
+
+    combat_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("combats.combat_id", ondelete="CASCADE"), primary_key=True
+    )
+    side: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.user_id", ondelete="CASCADE"), index=True
+    )
+    name: Mapped[str] = mapped_column(String(64), default="")

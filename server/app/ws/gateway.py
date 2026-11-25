@@ -62,7 +62,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         return
 
     connection = Connection(websocket, principal, clock)
-    context = WsContext(connection, state.auth.tokens, state.combat_router)
+    context = WsContext(connection, state.auth.tokens, state.combat_router, state.rooms)
     connection.start()
     connection.send(
         ws.WelcomeMessage(
@@ -83,6 +83,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     finally:
         watchdog.remove(connection)
         state.combat_router.drop(connection)
+        state.rooms.drop(connection)
         await connection.stop()
         if connection.close_code is not None:
             with contextlib.suppress(Exception):

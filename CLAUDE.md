@@ -10,7 +10,8 @@ Design lives in `docs/` — read the relevant doc before touching a system:
 [architecture](docs/architecture.md) · [protocol](docs/protocol.md) ·
 [world-gen](docs/world-gen.md) · [economy](docs/economy.md) ·
 [combat-space](docs/combat-space.md) · [combat-ground](docs/combat-ground.md) ·
-[content-pipeline](docs/content-pipeline.md) · [client](docs/client.md)
+[content-pipeline](docs/content-pipeline.md) · [client](docs/client.md) ·
+[lobby-rooms](docs/lobby-rooms.md)
 
 ## Stack
 - Server: Python 3.12, FastAPI, WebSockets, SQLAlchemy 2.0 (async) + Alembic, Pydantic v2

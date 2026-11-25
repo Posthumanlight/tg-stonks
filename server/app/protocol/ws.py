@@ -10,6 +10,7 @@ from pydantic import Field, TypeAdapter
 
 from app.protocol.base import ProtocolModel
 from app.protocol.combat import CombatIntent, CombatSnapshot, CombatUpdate
+from app.protocol.rooms import RoomClosed, RoomStarted, RoomView
 
 RequestId = Annotated[str, Field(max_length=64)]
 
@@ -75,13 +76,34 @@ class ActionMessage(ProtocolModel):
     payload: ActionPayload
 
 
+class RoomRef(ProtocolModel):
+    room_id: str = Field(max_length=64)
+
+
+class RoomSubscribeMessage(ProtocolModel):
+    """Watch your room: `room.state` now and on every change. Open subscriptions are
+    your presence in the room."""
+
+    type: Literal["room.subscribe"]
+    id: RequestId | None = None
+    payload: RoomRef
+
+
+class RoomUnsubscribeMessage(ProtocolModel):
+    type: Literal["room.unsubscribe"]
+    id: RequestId | None = None
+    payload: RoomRef
+
+
 ClientMessage = Annotated[
     HelloMessage
     | AuthRefreshMessage
     | PingMessage
     | SubscribeMessage
     | UnsubscribeMessage
-    | ActionMessage,
+    | ActionMessage
+    | RoomSubscribeMessage
+    | RoomUnsubscribeMessage,
     Field(discriminator="type"),
 ]
 CLIENT_MESSAGE: TypeAdapter[ClientMessage] = TypeAdapter(ClientMessage)
@@ -132,6 +154,21 @@ class CombatEventsMessage(ProtocolModel):
     payload: CombatUpdate
 
 
+class RoomStateMessage(ProtocolModel):
+    type: Literal["room.state"]
+    payload: RoomView
+
+
+class RoomStartedMessage(ProtocolModel):
+    type: Literal["room.started"]
+    payload: RoomStarted
+
+
+class RoomClosedMessage(ProtocolModel):
+    type: Literal["room.closed"]
+    payload: RoomClosed
+
+
 SERVER_MESSAGES = (
     WelcomeMessage,
     AckMessage,
@@ -139,6 +176,9 @@ SERVER_MESSAGES = (
     PongMessage,
     CombatSnapshotMessage,
     CombatEventsMessage,
+    RoomStateMessage,
+    RoomStartedMessage,
+    RoomClosedMessage,
 )
 CLIENT_MESSAGES = (
     HelloMessage,
@@ -147,4 +187,6 @@ CLIENT_MESSAGES = (
     SubscribeMessage,
     UnsubscribeMessage,
     ActionMessage,
+    RoomSubscribeMessage,
+    RoomUnsubscribeMessage,
 )

@@ -10,6 +10,7 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from app.combat.ground.ruleset import CombatRuleset
+from app.combat.match import Match
 from app.persistence.combat_repo import CombatStore
 from app.shared.clock import Clock
 from app.workers import ipc
@@ -35,12 +36,7 @@ class CombatBackend(Protocol):
     async def stop(self) -> None: ...
 
     async def create(
-        self,
-        slot: int,
-        combat_id: str,
-        owner_user_id: int,
-        mode: str,
-        setup: dict[str, Any],
+        self, slot: int, combat_id: str, match: Match, setup: dict[str, Any]
     ) -> dict[str, Any]:
         """Start a combat; returns its first snapshot (JSON)."""
         ...
@@ -52,6 +48,10 @@ class CombatBackend(Protocol):
     async def subscribe(
         self, slot: int, combat_id: str, user_id: int, last_seq: int | None
     ) -> dict[str, Any]: ...
+
+    async def concede(self, slot: int, combat_id: str, user_id: int) -> None:
+        """The user's side surrenders (online battles): the opponent wins."""
+        ...
 
     async def close(self, slot: int, combat_id: str, reason: str) -> None:
         """Mark an active combat `abandoned` and drop it from its worker."""
@@ -79,24 +79,12 @@ class ProcessBackend:
         await self._supervisor.stop()
 
     async def create(
-        self,
-        slot: int,
-        combat_id: str,
-        owner_user_id: int,
-        mode: str,
-        setup: dict[str, Any],
+        self, slot: int, combat_id: str, match: Match, setup: dict[str, Any]
     ) -> dict[str, Any]:
         self._supervisor.adjust_load(slot, +1)  # counted from now (see the Protocol)
         try:
             payload = await self._supervisor.request(
-                slot,
-                lambda rid: ipc.Create(
-                    request_id=rid,
-                    combat_id=combat_id,
-                    owner_user_id=owner_user_id,
-                    mode=mode,
-                    setup=setup,
-                ),
+                slot, lambda rid: ipc.Create.of(rid, combat_id, match, setup)
             )
         except BaseException:
             self._supervisor.adjust_load(slot, -1)
@@ -123,6 +111,14 @@ class ProcessBackend:
             ),
         )
         return payload or {}
+
+    async def concede(self, slot: int, combat_id: str, user_id: int) -> None:
+        await self._supervisor.request(
+            slot,
+            lambda rid: ipc.Concede(
+                request_id=rid, combat_id=combat_id, user_id=user_id
+            ),
+        )
 
     async def close(self, slot: int, combat_id: str, reason: str) -> None:
         await self._supervisor.request(
@@ -178,16 +174,11 @@ class InProcessBackend:
             await host.drain()
 
     async def create(
-        self,
-        slot: int,
-        combat_id: str,
-        owner_user_id: int,
-        mode: str,
-        setup: dict[str, Any],
+        self, slot: int, combat_id: str, match: Match, setup: dict[str, Any]
     ) -> dict[str, Any]:
         self._placing[slot] += 1  # counted from now (see the Protocol)
         try:
-            return await self.hosts[slot].create(combat_id, owner_user_id, mode, setup)
+            return await self.hosts[slot].create(combat_id, match, setup)
         finally:
             self._placing[slot] -= 1
 
@@ -201,5 +192,13 @@ class InProcessBackend:
     ) -> dict[str, Any]:
         return await self.hosts[slot].subscribe(combat_id, user_id, last_seq)
 
+    async def concede(self, slot: int, combat_id: str, user_id: int) -> None:
+        await self.hosts[slot].concede(combat_id, user_id)
+
     async def close(self, slot: int, combat_id: str, reason: str) -> None:
         await self.hosts[slot].close(combat_id, reason)
+
+    async def tick(self) -> None:
+        """Tests: run every host's activation timers (workers tick on their own)."""
+        for host in self.hosts:
+            await host.tick()

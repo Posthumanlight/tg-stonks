@@ -92,11 +92,15 @@ server/app/
                      refresh.py     refresh-token issue/rotate/revoke (reuse detection)
                      dependencies.py current_user, require_role (FastAPI)
                      ratelimit.py   in-memory token buckets
-  api/               health.py, world.py, auth.py, combats.py — thin routes
+  api/               health.py, world.py, auth.py, combats.py, rooms.py — thin routes
+  lobby/             room.py (pure room domain), store.py (RoomStore, in memory),
+                     hub.py (room pushes), service.py (RoomService) — docs/lobby-rooms.md
   ws/                gateway.py     /ws endpoint: handshake, read loop, close codes
                      connection.py  outbound queue, heartbeat, per-connection rate limit
                      router.py      message type → handler
   services/          combat_router.py  gateway side: placement, forwarding, fan-out
+                     combat_modes.py   what differs per mode (hotseat, pvp)
+                     custom_battles.py builder data, request -> validated setup
                      combat_backend.py CombatBackend interface: ProcessBackend (production),
                                        InProcessBackend (unit tests only)
   workers/           combat_worker.py  worker process entry point (own event loop)
@@ -265,7 +269,8 @@ process.
   - **Combat seats.** The worker that owns a combat checks every intent against its
     **seat map** (side → user). The gateway only forwards `user_id`.
     - Hotseat: the owner holds every side.
-    - PvP (later): one side per player.
+    - Online (`pvp`): one side per player, from the room's members.
+    - Seats are persisted in `combat_seats`, so recovery restores them.
   - Subscribing to a combat requires a seat. Spectators come later.
 - **Endpoint access:**
 
@@ -282,7 +287,8 @@ process.
 The first screen after login. It is client-side for v1; `/api/auth/me` supplies the
 user.
 
-- **Client screens:** a `screen` signal drives `login → lobby → galaxy | combat`.
+- **Client screens:** a `screen` signal drives
+  `login → lobby → galaxy | builder | rooms → room | combat`.
   Menus are Preact DOM overlays (see [client](client.md)).
 - **Lobby contents (v1):**
   - **"Galaxy chart"** opens the existing `GalaxyScene` with `GET /api/world/galaxy`.
@@ -292,6 +298,13 @@ user.
     `demo.toml`, with no builder step.
   - **"Resume" / "Abandon"** appear when the user has an active fight
     (`GET /api/combats`). There is **one active hotseat per user**.
+  - **Online:**
+    - "Online games" opens room search and creation;
+    - a **room code** field joins any room ("fast join"; a `?room=CODE` link fills it);
+    - "Back to your room" shows while the user is in one;
+    - "Resume" / "Surrender" shows for an online battle in progress (one per user).
+
+    See [lobby-rooms](lobby-rooms.md).
   - The username and a logout button.
 
 ---
@@ -315,6 +328,30 @@ combat worker.
   and the quick battle's armies. They must pass the same validation as a custom setup.
 - **One-shot:** setups aren't saved as scenarios. A setup lives only in its combat's
   record, so replay and recovery are unchanged.
+
+### Combat modes
+A combat's `mode` decides who plays it. The pure engine never knows the mode.
+
+| Mode | Seats | Timer | "Abandon" | One active per user |
+|---|---|---|---|---|
+| `hotseat` | the owner holds every side | none | ends it without an outcome (`abandoned`) | yes |
+| `pvp` | one side per room member (host = side 0) | the room's choice (`timer_s`, or none) | **concedes**: the opponent wins (`finished`) | yes |
+
+- **`Match`** (`server/app/combat/match.py`) carries the mode, the seats
+  (`Seat {side, user_id, name}`) and `timer_s`. It travels in the IPC `create` and is
+  stored in `combats` and `combat_seats`.
+- **`ModePolicy`** (`services/combat_modes.py`) holds the gateway-side differences, so a
+  new mode is a new entry, not an `if` in the router.
+- **`CombatRouter.start(match, setup)`** places any mode. `start_hotseat` is a thin
+  wrapper. The one-active check covers every seated user, and the in-flight create guard
+  covers all of them.
+- **Online battles start from a lobby room** ([lobby-rooms](lobby-rooms.md)). The room
+  validates each side alone on Ready (`deployment.deploy_side`: zones and points limit),
+  then the pair with `deploy`.
+- **Deployment zones** (`demo.toml [deployment]`) apply to **online** battles only. Hotseat
+  battles use `BattleMap.free()`, deploying anywhere.
+- **Surrender** is the engine action `Concede(side)`. It is recorded like any action, so
+  replays reproduce it.
 
 ### Custom battle flow
 1. **Builder data.** `GET /api/combats/builder` returns a static `BuilderView`:
@@ -434,15 +471,25 @@ state.
 - **No fog of war in v1:** every subscriber sees the whole combat.
 
 ### Timers
-The engine has no clock (rule 2). The worker runs one `asyncio` timer per activation
-and, on expiry, applies `Skip` as if the player had sent it. The timer is **disabled
-for hotseat**. PvP will use `rules.activation_timer_s`.
+The engine has no clock (rule 2). The worker shell times activations for combats with a
+timer (online battles where the host picked one).
+- **One deadline heap per `CombatHost`,** checked every 0.5 s (`tick`), not a task per
+  combat.
+- **Each deadline is armed when an activation starts.** It is keyed by the count of
+  `ActivationStarted` events, so a unit's several actions share one deadline.
+- **On expiry** the host applies `Skip` through the same path as a player's intent, so it
+  is recorded and replayable.
+- **Every update and snapshot carries `deadline_ms`** (epoch ms, or null) for the
+  client's countdown.
+- **Deadlines aren't persisted.** A recovered combat gets a fresh full timer when it's
+  next touched.
+- **Hotseat is untimed.** `rules.activation_timer_s` is the default preset a room offers.
 
 ### Lifecycle
 | Status | Meaning | Transition |
 |---|---|---|
-| `active` | being played | created by `POST /api/combats/custom` or `/demo` |
-| `finished` | the engine reported an outcome | written immediately, with the outcome |
+| `active` | being played | created by `POST /api/combats/custom` or `/demo`, or by a room when both players are ready |
+| `finished` | the engine reported an outcome (including a surrender) | written immediately, with the outcome |
 | `abandoned` | the owner abandoned it, or no action for `combat_idle_timeout` (default 24 h) | `POST /api/combats/{id}/abandon`, or the idle sweeper in the worker |
 | `aborted` | can't be replayed (content or rules changed) | during recovery |
 
@@ -451,10 +498,14 @@ records stay in the DB.
 
 ### Persistence and recovery
 - **Tables:**
-  - `combats`: `combat_id` (UUID PK), `owner_user_id`, `mode` (`hotseat`),
+  - `combats`: `combat_id` (UUID PK), `owner_user_id`, `mode` (`hotseat` | `pvp`),
     `status`, `worker_slot`, `setup` (JSON), `seed`, `content_hash`,
-    `rules_version`, `outcome` (JSON, null), `created_at`, `updated_at`,
-    `finished_at`;
+    `rules_version`, `outcome` (JSON, null), `activation_timer_s` (null = untimed),
+    `created_at`, `updated_at`, `finished_at`;
+  - `combat_seats`: `combat_id`, `side` (PK together), `user_id` (indexed), `name` (the
+    player's name at start). Records without rows (older hotseat ones) read as "the
+    owner holds every side". `GET /api/combats` lists the combats a user owns **or** is
+    seated in;
   - `combat_actions`: `combat_id`, `seq` (the action number), `action` (JSON); primary
     key `(combat_id, seq)`.
 - **Writes:**
@@ -491,7 +542,7 @@ records stay in the DB.
 
   | Direction | Messages |
   |---|---|
-  | gateway → worker | `hello_ack`, `create {combat_id, owner, setup, seed?}`, `intent {request_id, user_id, combat_id, action}`, `snapshot_request {combat_id, last_seq?}`, `close {combat_id}`, `ping`, `drain` |
+  | gateway → worker | `hello_ack`, `create {combat_id, owner_user_id, mode, seats[], timer_s, setup}`, `intent {request_id, user_id, combat_id, intent}`, `subscribe {combat_id, user_id, last_seq?}`, `concede {combat_id, user_id}`, `close {combat_id, reason}`, `ping`, `drain` |
   | worker → gateway | `hello {slot, boot_token}`, `reply {request_id, ok, reason_key?}`, `pushed {combat_id, update}` (`update`: `CombatUpdate` as JSON text, forwarded unparsed), `load_report {instances}`, `pong` |
 
 - **Authentication:** the listener binds to localhost or a Unix socket only. A worker's
@@ -684,7 +735,7 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 |---|---|
 | `users` | `user_id` BIGINT identity PK · `username` VARCHAR(32) · `username_normalized` VARCHAR(32) unique (**new**) · `hashed_password` VARCHAR(255) · `role` VARCHAR(16) default `player` (**new**) · `created_at` (**new**) |
 | `refresh_tokens` | (**new**) see [Refresh tokens](#refresh-tokens) |
-| `combats`, `combat_actions` | (**new**) see [Persistence and recovery](#persistence-and-recovery) |
+| `combats`, `combat_actions`, `combat_seats` | (**new**) see [Persistence and recovery](#persistence-and-recovery) |
 | `worlds`, `worldgen_pins`, `body_names` | world-gen deltas ([world-gen](world-gen.md)) |
 | `gen_*` | debug world snapshot, never read by the game ([world-gen](world-gen.md)) |
 | `identities` | (**later**) other sign-in methods |
@@ -741,6 +792,19 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
   - each `setup.*` error with its `detail`;
   - `409 combat.already_active`;
   - abandon (owner only), after which `/custom` succeeds again.
+- **Lobby rooms:**
+  - pure `Room` and `MemoryRoomStore` tests;
+  - API tests: create, search, join by code, private rooms, ready and zones, the points
+    limit, the battle start, kick and leave, expiry, the join rate limit;
+  - a WebSocket test with two players: per-viewer pushes, presence and grace, then the
+    battle where only the seat holder acts.
+- **Online combats** in a worker host (`tests/workers/test_pvp.py`):
+  - seats and `players`;
+  - the timer's auto-Skip with a fake clock;
+  - surrender;
+  - seats and timer surviving recovery.
+
+  `concede` is also in the backend contract suite (both backends).
 - **Process integration:**
   1. Start the gateway with 2 real workers.
   2. Play the demo combat.
@@ -774,14 +838,30 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
    4. Client: the builder store, placement hints, `DeployScene` with drag and drop, the
       builder overlay, and the lobby changes.
    5. Tests at each step. The load-test bots stay on `/demo` (quick battle).
+9. **Lobby rooms and online 1v1** ([lobby-rooms](lobby-rooms.md)):
+   1. Content and engine: `rules.pvp` presets, the PvP deployment zones, `deploy_side`
+      and the points limit, `Concede`.
+   2. Persistence and workers:
+      - the `combat_seats` migration and `activation_timer_s`;
+      - `Match` in IPC `create`, IPC `concede`;
+      - the activation timer;
+      - `ModePolicy` and `CombatRouter.start`.
+   3. The lobby domain: `Room`, `RoomStore`.
+   4. `RoomService`, `RoomHub`, `/api/rooms`, `room.*` WebSocket messages, and
+      `PROTOCOL_VERSION` 4.
+   5. Client:
+      - the builder's room mode;
+      - the room and room-search stores and screens;
+      - the lobby's Online section;
+      - the combat screen's turn ownership, countdown and surrender.
 
 ---
 
 ## Open questions
 - Tick rates for the world sim (fast/slow), and the world-sim process design (sector
   sharding, handoff of moving ships).
-- PvP: matchmaking, activation timers, AFK handling and forfeits, reconnect grace
-  periods.
+- PvP: a matchmaking queue (after release), rating, forfeit on long disconnects in
+  battle, and rematch (see [lobby-rooms › Open questions](lobby-rooms.md#open-questions)).
 - Spectators and replays shown to other players.
 - Scaling beyond one machine (Redis pub/sub between several gateways, remote workers).
 - Hosting and deployment (process manager, TLS termination, backups).

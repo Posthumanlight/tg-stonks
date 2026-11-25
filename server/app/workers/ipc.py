@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from app.combat.match import Match, Seat
+
 MAX_FRAME = 16 * 1024 * 1024
 HEADER = 4
 
@@ -24,13 +26,46 @@ class HelloAck(_Msg):
     type: Literal["hello_ack"] = "hello_ack"
 
 
+class SeatMsg(_Msg):
+    side: int
+    user_id: int
+    name: str = ""
+
+
 class Create(_Msg):
     type: Literal["create"] = "create"
     request_id: int
     combat_id: str
     owner_user_id: int
     mode: str
+    seats: list[SeatMsg]
+    timer_s: int | None = None
     setup: dict[str, Any]
+
+    @classmethod
+    def of(
+        cls, request_id: int, combat_id: str, match: Match, setup: dict[str, Any]
+    ) -> "Create":
+        return cls(
+            request_id=request_id,
+            combat_id=combat_id,
+            owner_user_id=match.owner_user_id,
+            mode=match.mode,
+            seats=[
+                SeatMsg(side=s.side, user_id=s.user_id, name=s.name)
+                for s in match.seats
+            ],
+            timer_s=match.timer_s,
+            setup=setup,
+        )
+
+    def match(self) -> Match:
+        return Match(
+            self.owner_user_id,
+            self.mode,
+            tuple(Seat(s.side, s.user_id, s.name) for s in self.seats),
+            self.timer_s,
+        )
 
 
 class Intent(_Msg):
@@ -47,6 +82,15 @@ class Subscribe(_Msg):
     combat_id: str
     user_id: int
     last_seq: int | None = None
+
+
+class Concede(_Msg):
+    """An online player surrenders: their side concedes, the opponent wins."""
+
+    type: Literal["concede"] = "concede"
+    request_id: int
+    combat_id: str
+    user_id: int
 
 
 class Close(_Msg):
@@ -104,6 +148,7 @@ Message = Annotated[
     | Create
     | Intent
     | Subscribe
+    | Concede
     | Close
     | Ping
     | Drain

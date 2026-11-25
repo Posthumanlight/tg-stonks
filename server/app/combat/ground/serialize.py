@@ -6,7 +6,15 @@ and the protocol views, so the formats can't drift apart.
 
 from typing import Any
 
-from app.combat.ground.actions import Action, Attack, Move, Skip, UseAbility, Wait
+from app.combat.ground.actions import (
+    Action,
+    Attack,
+    Concede,
+    Move,
+    Skip,
+    UseAbility,
+    Wait,
+)
 from app.combat.ground.board import Board, Square
 from app.combat.ground.setup import CombatSetup, UnitSetup
 from app.combat.ground.state import Outcome
@@ -38,6 +46,8 @@ def action_to_json(action: Action) -> Json:
             return {"type": "wait"}
         case Skip():
             return {"type": "skip"}
+        case Concede(side=side):
+            return {"type": "concede", "side": side}
     raise ValueError(f"not an action: {action!r}")
 
 
@@ -60,6 +70,8 @@ def action_from_json(data: Json) -> Action:
                 return Wait()
             case "skip":
                 return Skip()
+            case "concede":
+                return Concede(int(data["side"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"invalid action {data!r}") from exc
     raise ValueError(f"unknown action type in {data!r}")
