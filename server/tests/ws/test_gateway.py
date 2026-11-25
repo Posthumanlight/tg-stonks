@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+from app.protocol import PROTOCOL_VERSION
 from app.ws.connection import CloseCode, Connection
 
 from .conftest import open_client
@@ -12,7 +13,7 @@ async def test_handshake_welcomes_the_user(live) -> None:
     client = await open_client(live, await live.token())
     welcome = await client.recv()
     assert welcome["type"] == "welcome"
-    assert welcome["payload"]["protocol_version"] == 2
+    assert welcome["payload"]["protocol_version"] == PROTOCOL_VERSION
 
 
 async def test_handshake_failures_close_with_codes(live) -> None:

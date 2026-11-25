@@ -1,7 +1,10 @@
 // Typed endpoints. Same origin as the page: Vite proxies /api in dev, FastAPI serves
 // both in production. Static data is revalidated by the browser's HTTP cache via ETag.
 import type {
+  BuilderView,
   CombatCreated,
+  CombatSummaryView,
+  CustomCombatRequest,
   GalaxyView,
   HealthView,
   LoginRequest,
@@ -31,6 +34,14 @@ export const authApi = {
 };
 
 export const combatApi = {
-  /** The user's hotseat demo: created, or the already active one. */
+  /** The quick battle: created with the default armies, or the already active fight. */
   createDemo: (): Promise<CombatCreated> => request<CombatCreated>("POST", "/api/combats/demo"),
+  /** Static builder data (ETag-revalidated). */
+  getBuilder: (): Promise<BuilderView> => request<BuilderView>("GET", "/api/combats/builder"),
+  /** A custom battle. 400 `setup.*` (detail: SetupErrorRef), 409 `combat.already_active`. */
+  createCustom: (body: CustomCombatRequest): Promise<CombatCreated> =>
+    request<CombatCreated>("POST", "/api/combats/custom", { body }),
+  list: (): Promise<CombatSummaryView[]> => request<CombatSummaryView[]>("GET", "/api/combats"),
+  abandon: (combatId: string): Promise<void> =>
+    request<void>("POST", `/api/combats/${encodeURIComponent(combatId)}/abandon`),
 };

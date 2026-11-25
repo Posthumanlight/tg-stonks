@@ -17,6 +17,9 @@ import {
 /** A press that moves less than this (px) and is released is a tap, not a drag. */
 const TAP_SLOP_PX = 8;
 const WHEEL_ZOOM_SPEED = 0.0015;
+/** While something is grabbed, a pointer this close to the free area's edge scrolls. */
+const EDGE_PX = 32;
+const EDGE_STEP_PX = 6;
 
 export interface CameraOptions {
   /** Screen space covered by overlays (top bar, bottom bar), kept free when fitting. */
@@ -27,6 +30,14 @@ export interface CameraOptions {
   onTap(screen: Vec, world: Vec): void;
   /** Called whenever the zoom changed (redraw constant-screen-size shapes). */
   onZoom?(zoom: number): void;
+  /** A press the scene wants to drag itself (a token, say): return true to take the
+   * gesture, and the camera won't pan. Released without moving, it is still a tap. */
+  grab?(screen: Vec, world: Vec): boolean;
+  onGrabMove?(screen: Vec, world: Vec): void;
+  /** Released after moving. */
+  onGrabEnd?(screen: Vec, world: Vec): void;
+  /** A second finger turned the grab into a pinch. */
+  onGrabCancel?(): void;
 }
 
 export class CameraController {
@@ -38,6 +49,7 @@ export class CameraController {
   private pressStart: Vec | null = null;
   private pinch: { distance: number; zoom: number } | null = null;
   private gestureMoved = false;
+  private grabbing = false;
 
   constructor(
     private readonly scene: Phaser.Scene,
@@ -110,11 +122,17 @@ export class CameraController {
       this.pinch = { distance: distance(p1, p2), zoom: this.zoom };
       this.dragFrom = null;
       this.gestureMoved = true; // a pinch is never a tap
+      if (this.grabbing) {
+        this.grabbing = false;
+        this.options.onGrabCancel?.();
+      }
       return;
     }
-    this.dragFrom = { x: pointer.x, y: pointer.y };
-    this.pressStart = { x: pointer.x, y: pointer.y };
+    const screen = { x: pointer.x, y: pointer.y };
+    this.dragFrom = screen;
+    this.pressStart = screen;
     this.gestureMoved = false;
+    this.grabbing = this.options.grab?.(screen, this.screenToWorld(screen)) ?? false;
   }
 
   private onMove(pointer: Phaser.Input.Pointer): void {
@@ -132,17 +150,40 @@ export class CameraController {
     if (this.pressStart && distance(pointer, this.pressStart) > TAP_SLOP_PX) {
       this.gestureMoved = true;
     }
+    if (this.grabbing) {
+      if (!this.gestureMoved) return;
+      this.scrollAtEdge(pointer);
+      const screen = { x: pointer.x, y: pointer.y };
+      this.options.onGrabMove?.(screen, this.screenToWorld(screen));
+      return;
+    }
     this.center = { x: this.center.x - dx / this.zoom, y: this.center.y - dy / this.zoom };
+    this.apply();
+  }
+
+  /** Near the edge of the free area while carrying something: scroll that way. */
+  private scrollAtEdge(pointer: Vec): void {
+    const { width, height } = this.view;
+    const top = this.options.insetTop;
+    const bottom = height - this.options.insetBottom;
+    const step = EDGE_STEP_PX / this.zoom;
+    const sx = pointer.x < EDGE_PX ? -step : pointer.x > width - EDGE_PX ? step : 0;
+    const sy = pointer.y < top + EDGE_PX ? -step : pointer.y > bottom - EDGE_PX ? step : 0;
+    if (sx === 0 && sy === 0) return;
+    this.center = { x: this.center.x + sx, y: this.center.y + sy };
     this.apply();
   }
 
   private onUp(pointer: Phaser.Input.Pointer): void {
     const remaining = this.downPointers().length;
     if (remaining === 0) {
+      const screen = { x: pointer.x, y: pointer.y };
       if (!this.gestureMoved && this.pressStart) {
-        const screen = { x: pointer.x, y: pointer.y };
         this.options.onTap(screen, this.screenToWorld(screen));
+      } else if (this.grabbing) {
+        this.options.onGrabEnd?.(screen, this.screenToWorld(screen));
       }
+      this.grabbing = false;
       this.pinch = null;
       this.dragFrom = null;
       this.pressStart = null;

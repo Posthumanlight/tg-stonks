@@ -17,7 +17,7 @@ export function UnitPanel() {
           {unitLabel(units, unit.uid)}
         </strong>
         <span class="muted">
-          {sideLabel(unit.side)} · {t("combat.models", { models: unit.models })}
+          {sideLabel(unit.side, combat.board.value?.factions)} · {t("combat.models", { models: unit.models })}
           {unit.wounded && ` · ${t("combat.wounded")}`}
         </span>
       </div>

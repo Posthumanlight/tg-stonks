@@ -33,15 +33,21 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
 - **Production hosting:** FastAPI serves `client/dist` at `/` when the directory exists, so
   there's one origin and no CORS.
 - **Screens** (see [architecture › Lobby](architecture.md#lobby)): the `screen` signal
-  (`src/state/screen.ts`) drives `boot → login → lobby → galaxy | combat`. Menus are
-  Preact overlays; the galaxy and combat screens are Phaser scenes.
+  (`src/state/screen.ts`) drives `boot → login → lobby → galaxy | builder | combat`.
+  Menus are Preact overlays; the galaxy, builder and combat screens are Phaser scenes.
   - **Login/register:** forms calling `/api/auth/login` and `/api/auth/register`.
-  - **Lobby:** the username, logout, **"Galaxy chart"** (opens `GalaxyScene`) and
-    **"Combat demo"** (`POST /api/combats/demo`, then the combat screen).
+  - **Lobby:**
+    - the username and logout;
+    - **"Galaxy chart"** opens `GalaxyScene`;
+    - **"Custom battle"** opens the builder (see
+      [Custom battle screen](#custom-battle-screen));
+    - **"Quick battle"** (`POST /api/combats/demo`) goes straight to the combat screen;
+    - when `GET /api/combats` lists an active fight, **"Resume"** and **"Abandon"**
+      (`POST /api/combats/{id}/abandon`, after a confirm) appear.
 - **Phaser host** (`src/game/host.ts`): the game is created the first time a canvas
   screen is shown, and hidden with its loop asleep on DOM-only screens. Scenes are
   registered without autostart; each canvas screen has one entry scene (`boot` → galaxy,
-  `combat`), and switching screens stops the others. `#game` is unhidden **before** the
+  `deploy` for the builder, `combat`), and switching screens stops the others. `#game` is unhidden **before** the
   game is created: in `Scale.RESIZE` mode a hidden parent measures 0×0 and the canvas
   stays empty.
 - **Shared camera** (`src/scenes/shared/`): `viewport.ts` is the pure camera maths (fit,
@@ -69,15 +75,21 @@ client/
   src/
     main.tsx          i18n → overlay → Phaser → load data
     net/              http.ts (request wrapper), api.ts (endpoints), ws.ts (WsClient)
-    state/            signals: auth, screen, galaxy, combatStore (logic), combat (wiring)
+    state/            signals: auth, screen, galaxy, combatStore (logic), combat (wiring),
+                      builderStore (logic), builder (wiring)
     combat/           pure combat UI logic: interaction.ts (tap → intent, highlights),
                       log.ts (event → log line), fixtures.ts (test data)
+    builder/          pure builder logic: placement.ts (placement hints), draft.ts (draft
+                      edits, points, issues), drag.ts (drag state machine), pointer.ts
+                      (DOM point → board square bridge), fixtures.ts (test data)
     i18n/             t(), locale detection
     game/             config.ts (Phaser config, scene registry), host.ts (show/hide, scenes)
     scenes/           BootScene; shared/ (viewport maths, CameraController);
-                      galaxy/ (GalaxyScene, layout, palette); combat/ (CombatScene, palette)
+                      galaxy/ (GalaxyScene, layout, palette); combat/ (CombatScene,
+                      DeployScene, boardRenderer, palette)
     ui/               App.tsx; screens/ (Login, Lobby, GalaxyOverlay);
-                      combat/ (CombatScreen, ActionBar, UnitPanel, CombatLog, …); styles.css
+                      combat/ (CombatScreen, ActionBar, UnitPanel, CombatLog, …);
+                      builder/ (BuilderScreen, RosterTray, DeployPanel); styles.css
     protocol/         GENERATED
 ```
 Pure logic, such as `scenes/galaxy/layout.ts` and the i18n helpers, sits apart from
@@ -167,8 +179,96 @@ Phaser and the DOM. It is unit-tested with vitest in `*.test.ts` files next to t
   - **Battle log:** `combat/log.ts` formats the events, leaving out dice, single hits and
     bookkeeping.
   - **Outcome dialog:** shows the result and returns to the lobby.
-- **Resume:** reopening the demo, after leaving or reloading the page, returns the same
-  active fight. The subscribe answers with a snapshot.
+- **Resume:** the lobby's "Resume" (or "Quick battle"), after leaving or reloading the
+  page, returns the same active fight. The subscribe answers with a snapshot.
+- **Side labels** use the faction name from `board.factions` ("Concord", "Brood"), with
+  "Side N" as the fallback for old records. Mirror matches add the number ("Concord 1",
+  "Concord 2").
+
+## Custom battle screen
+The player builds both armies and deploys them on the fixed map, then starts a hotseat
+fight. The rules are in
+[combat-ground › Deployment and army building](combat-ground.md#deployment-and-army-building),
+and the endpoints in [protocol › Custom battle models](protocol.md#custom-battle-models).
+
+- **Data:** `GET /api/combats/builder` once per session (`ETag`, as for the galaxy). It
+  holds the map, terrain passability, zones, the factions' unit cards, the limits and the
+  default setup.
+- **State** follows the combat pattern: `state/builderStore.ts` is a factory over an
+  injected API, and `state/builder.ts` wires it.
+  - **Signals:** `template` (loading state, then the `BuilderView`), `draft` (each
+    side's faction and units, in the exact shape of `CustomCombatRequest`),
+    `activeSide`, `selected` (a placed unit), `drag`, `notice` (the last refused drop),
+    `serverIssue` (a located `setup.*` rejection), `conflict` (409) and `starting`.
+  - **Computed:** `points[side]`, `issues` (the server's checks mirrored, in its order),
+    `canStart` (no issues) and `ghost` (the footprint under a drag, with its issue).
+  - **The draft persists** in `localStorage` (per device, wrapped in try/catch). A reload
+    keeps the work, and a draft that no longer fits the template (content changed) is
+    dropped for the defaults.
+- **Placement hints** (`builder/placement.ts`, pure): the footprint squares, in bounds,
+  passable, no overlap, and inside the side's zone. They mirror the server's check for
+  instant feedback only; the server re-validates on Start (rule 1). A JSON fixture shared
+  with pytest keeps both checks in step.
+- **Scene** (`scenes/combat/DeployScene.ts`):
+  - The terrain and the unit tokens come from `boardRenderer.ts`, shared with
+    `CombatScene`, so both screens draw the board the same way.
+  - `CameraController` handles pan and zoom, with its own overlay insets.
+  - **Zones:** when the template has zones, the active side's zone is tinted in its side
+    colour.
+  - **Tokens:** the active side's at full strength, the other side's dimmed, the carried
+    one faded. A white ring marks the selected token and a red ring a token with an
+    issue.
+  - **Ghost footprint** under a drag: green where the unit fits, red where it doesn't.
+    The reason shows in the dock's hint line.
+- **Drag and drop** (`builder/drag.ts`, a pure state machine:
+  `idle → dragging | picked → idle`; `release` turns a drop into a `place`, `move` or
+  `remove` command, which the store checks against the placement rule):
+  - **From the roster tray:** dragging a unit card onto the board places a new unit of
+    that type, at its default model count.
+  - **On the board:** dragging a token moves it. A drop on an invalid square snaps back
+    to where the drag started.
+  - **Remove:** drop a token back on the tray, or use Remove in the unit panel.
+  - **Pan vs drag:** a gesture that starts on a card or a token is a drag. One that starts
+    on empty ground pans, and pinch always zooms. Only the active side's tokens can be
+    dragged.
+  - **Tap fallback** (precision and accessibility): tap a card or a token to pick it up,
+    then tap a square to drop it there.
+  - **Pointer events** cover mouse, touch and pen alike. Near the screen edge during a
+    drag, the camera scrolls.
+  - **How it's wired:**
+    - Board gestures go through `CameraController`'s optional `grab` hook: a press on a
+      draggable token takes the gesture, so the camera doesn't pan.
+    - A roster card captures the pointer on press, because a quick flick leaves the card
+      before its first move event. On touch only a mostly vertical move drags, so a
+      sideways swipe still scrolls the tray (`touch-action: pan-x`).
+    - The card maps screen points to squares through `builder/pointer.ts`, which the
+      scene installs, so the DOM code needs no Phaser import.
+    - A tap is the card's `click`, so keyboards, screen readers and switch access work
+      too.
+- **Overlay** (`ui/builder/`):
+  - **Top bar:** back to the lobby, and the two side tabs ("Side 1" / "Side 2", with the
+    faction name and points total).
+  - **Faction picker** on each tab. Changing a side's faction clears its units, after a
+    confirm.
+  - **Roster tray** (the bottom dock): the faction's unit cards with name, points,
+    footprint (1×1 or 2×2) and model range.
+  - **Unit panel** for the selected token: a model-count stepper within `min..max`, its
+    points, and Remove.
+  - **Issues list:** the hint problems, then any server `setup.*` error. Tapping one
+    selects the token named in `detail`.
+  - **Reset to defaults** (after a confirm) and **Start**, which is disabled until
+    `canStart`.
+- **Start:** `POST /api/combats/custom` with the draft.
+  - `201` clears the draft and opens the combat screen.
+  - `400 setup.*` shows the error and selects `detail.side` / `detail.unit`.
+  - `409 combat.already_active` offers Resume or Abandon.
+- **i18n:** `builder.*` (screen texts), `setup.*` (error reasons) and `faction.*.name`, in
+  both locale files.
+- **Tests (vitest):**
+  - placement against the shared fixtures;
+  - the store: points, `canStart`, faction changes, and dropping a stale draft;
+  - the drag state machine as pure transitions (place, move, invalid drop snaps back,
+    remove, tap fallback).
 
 ## Dev workflow
 Run these in two terminals, from the repo root and from `client/`:
@@ -190,6 +290,11 @@ npm run dev            # http://localhost:5173, also on your LAN IP for a real p
   script `async` so a slow telegram.org can't block the page.
 - **Combat animations:** tweens for moves and hits, driven by the events. The view already
   holds the end state.
+- **Drag on small screens:** at 360×640 the roster tray and the board share little
+  space. Is a collapsible tray enough, or do we need a full-screen roster sheet? Long
+  press vs immediate drag on tokens needs testing on real phones.
+- **Zone UI** once maps get zones: tint both zones, or only the active side's? Auto-fill
+  a side into its zone?
 - **Bundle size:** about 1.4 MB minified (370 KB gzip), mostly Phaser. Should Phaser be
   lazy-loaded behind the overlay, or does a custom Phaser build cut it?
 - **High-DPI rendering:** the canvas renders at CSS pixels, which is fine for pixel art, but

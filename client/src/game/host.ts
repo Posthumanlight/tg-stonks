@@ -4,12 +4,17 @@
 import type Phaser from "phaser";
 
 import { COMBAT_SCENE } from "../scenes/combat/CombatScene";
+import { DEPLOY_SCENE } from "../scenes/combat/DeployScene";
 import { startGame } from "./config";
 
-export type CanvasView = "galaxy" | "combat";
+export type CanvasView = "galaxy" | "builder" | "combat";
 
 /** Entry scene per canvas screen. The galaxy goes through "boot", which waits for data. */
-const ENTRY_SCENE: Record<CanvasView, string> = { galaxy: "boot", combat: COMBAT_SCENE };
+const ENTRY_SCENE: Record<CanvasView, string> = {
+  galaxy: "boot",
+  builder: DEPLOY_SCENE,
+  combat: COMBAT_SCENE,
+};
 
 let game: Phaser.Game | null = null;
 let shown: CanvasView | null = null;

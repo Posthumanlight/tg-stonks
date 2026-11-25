@@ -12,7 +12,7 @@ from app.combat.ground.serialize import (
     setup_from_json,
     setup_to_json,
 )
-from app.combat.ground.setup import load_demo_setup
+from app.combat.ground.deployment import load_demo_setup
 from app.protocol.combat import MoveIntent, SkipIntent, WaitIntent
 from app.shared.errors import GameError
 from app.workers.combat_instance import CombatInstance

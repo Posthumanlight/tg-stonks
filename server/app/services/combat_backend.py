@@ -53,6 +53,10 @@ class CombatBackend(Protocol):
         self, slot: int, combat_id: str, user_id: int, last_seq: int | None
     ) -> dict[str, Any]: ...
 
+    async def close(self, slot: int, combat_id: str, reason: str) -> None:
+        """Mark an active combat `abandoned` and drop it from its worker."""
+        ...
+
 
 class ProcessBackend:
     def __init__(self, supervisor: Supervisor) -> None:
@@ -119,6 +123,12 @@ class ProcessBackend:
             ),
         )
         return payload or {}
+
+    async def close(self, slot: int, combat_id: str, reason: str) -> None:
+        await self._supervisor.request(
+            slot,
+            lambda rid: ipc.Close(request_id=rid, combat_id=combat_id, reason=reason),
+        )
 
 
 class InProcessBackend:
@@ -190,3 +200,6 @@ class InProcessBackend:
         self, slot: int, combat_id: str, user_id: int, last_seq: int | None
     ) -> dict[str, Any]:
         return await self.hosts[slot].subscribe(combat_id, user_id, last_seq)
+
+    async def close(self, slot: int, combat_id: str, reason: str) -> None:
+        await self.hosts[slot].close(combat_id, reason)

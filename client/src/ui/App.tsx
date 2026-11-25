@@ -1,5 +1,6 @@
 import { t } from "../i18n";
 import { screen } from "../state/screen";
+import { BuilderScreen } from "./builder/BuilderScreen";
 import { CombatScreen } from "./combat/CombatScreen";
 import { GalaxyOverlay } from "./screens/GalaxyOverlay";
 import { Lobby } from "./screens/Lobby";
@@ -16,6 +17,8 @@ export function App() {
       return <Lobby />;
     case "galaxy":
       return <GalaxyOverlay />;
+    case "builder":
+      return <BuilderScreen />;
     case "combat":
       return <CombatScreen />;
   }

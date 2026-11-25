@@ -84,6 +84,17 @@ async def test_errors_cross_the_boundary_unchanged(backend, demo_setup_json) -> 
         await backend.intent(0, COMBAT, OWNER, {"type": "move", "to": [11, 11]})
 
 
+async def test_close_abandons_the_combat(backend, store, demo_setup_json) -> None:
+    await backend.create(0, COMBAT, OWNER, "hotseat", demo_setup_json)
+    await backend.intent(0, COMBAT, OWNER, {"type": "skip"})
+    await backend.close(0, COMBAT, "player")
+    stored = await store.load(COMBAT)
+    assert stored is not None and stored.status == "abandoned"
+    assert len(stored.actions) == 1  # pending actions were flushed first
+    with pytest.raises(GameError, match="combat.not_found"):
+        await backend.intent(0, COMBAT, OWNER, {"type": "skip"})
+
+
 @pytest.mark.slow
 async def test_killed_worker_recovers_its_combats(
     ruleset, store, db_url, demo_setup_json

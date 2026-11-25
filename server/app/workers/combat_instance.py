@@ -162,7 +162,7 @@ class CombatInstance:
 
     def snapshot(self) -> CombatSnapshot:
         return CombatSnapshot(
-            board=board_view(self.state),
+            board=board_view(self.state, self.setup.factions),
             view=combat_view(self.combat_id, self.seq, self.state),
             legal=combat_legal(legal_actions(self.ruleset, self.state)),
         )

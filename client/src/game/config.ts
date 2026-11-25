@@ -2,10 +2,16 @@ import Phaser from "phaser";
 
 import { BootScene } from "../scenes/BootScene";
 import { COMBAT_SCENE, CombatScene } from "../scenes/combat/CombatScene";
+import { DEPLOY_SCENE, DeployScene } from "../scenes/combat/DeployScene";
 import { GALAXY_SCENE, GalaxyScene } from "../scenes/galaxy/GalaxyScene";
 import { CHART_COLOURS } from "../scenes/galaxy/palette";
 
-const SCENES = { boot: BootScene, [GALAXY_SCENE]: GalaxyScene, [COMBAT_SCENE]: CombatScene };
+const SCENES = {
+  boot: BootScene,
+  [GALAXY_SCENE]: GalaxyScene,
+  [DEPLOY_SCENE]: DeployScene,
+  [COMBAT_SCENE]: CombatScene,
+};
 
 export function startGame(parent: HTMLElement): Phaser.Game {
   const game = new Phaser.Game({

@@ -49,6 +49,15 @@ class Subscribe(_Msg):
     last_seq: int | None = None
 
 
+class Close(_Msg):
+    """The owner abandoned the combat: flush, mark it `abandoned`, drop it."""
+
+    type: Literal["close"] = "close"
+    request_id: int
+    combat_id: str
+    reason: str
+
+
 class Ping(_Msg):
     type: Literal["ping"] = "ping"
 
@@ -95,6 +104,7 @@ Message = Annotated[
     | Create
     | Intent
     | Subscribe
+    | Close
     | Ping
     | Drain
     | Hello

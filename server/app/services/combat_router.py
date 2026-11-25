@@ -3,7 +3,7 @@
 import uuid
 from typing import Any, Protocol
 
-from app.persistence.combat_repo import CombatStore
+from app.persistence.combat_repo import ACTIVE, CombatStore
 from app.services.combat_backend import CombatBackend
 from app.shared.errors import GameError
 
@@ -18,30 +18,52 @@ class Subscriber(Protocol):
 
 
 class CombatRouter:
-    def __init__(
-        self, backend: CombatBackend, store: CombatStore, demo_setup: dict[str, Any]
-    ) -> None:
+    def __init__(self, backend: CombatBackend, store: CombatStore) -> None:
         self._backend = backend
         self._store = store
-        self._demo_setup = demo_setup
         self._slots: dict[str, int] = {}
         self._subscribers: dict[str, set[Subscriber]] = {}
+        self._creating: set[int] = set()  # users with a create in flight
         backend.on_push(self._fan_out)
 
     # --- combats -----------------------------------------------------------------------
 
-    async def create_demo(self, user_id: int) -> str:
-        """The user's hotseat demo: the active one if any, else a new one."""
-        existing = await self._store.active_for_owner(user_id, HOTSEAT)
-        if existing is not None:
-            self._slots[existing.combat_id] = existing.worker_slot
-            return existing.combat_id
-        loads = self._backend.loads()
-        slot = min(range(len(loads)), key=lambda s: (loads[s], s))
-        combat_id = str(uuid.uuid4())
-        await self._backend.create(slot, combat_id, user_id, HOTSEAT, self._demo_setup)
-        self._slots[combat_id] = slot
-        return combat_id
+    async def start_hotseat(
+        self, user_id: int, setup: dict[str, Any], *, resume_active: bool
+    ) -> str:
+        """Start a hotseat combat from a validated setup (JSON). One active hotseat per
+        user: with one already running, return it (`resume_active`, the quick battle)
+        or refuse with `combat.already_active` (a custom battle mustn't be dropped)."""
+        if user_id in self._creating:  # a double tap: the first request wins
+            raise GameError("combat.already_active", 409)
+        self._creating.add(user_id)
+        try:
+            existing = await self._store.active_for_owner(user_id, HOTSEAT)
+            if existing is not None:
+                if not resume_active:
+                    raise GameError("combat.already_active", 409)
+                self._slots[existing.combat_id] = existing.worker_slot
+                return existing.combat_id
+            loads = self._backend.loads()
+            slot = min(range(len(loads)), key=lambda s: (loads[s], s))
+            combat_id = str(uuid.uuid4())
+            await self._backend.create(slot, combat_id, user_id, HOTSEAT, setup)
+            self._slots[combat_id] = slot
+            return combat_id
+        finally:
+            self._creating.discard(user_id)
+
+    async def abandon(self, user_id: int, combat_id: str) -> None:
+        """The owner gives up an active combat; it ends without an outcome."""
+        summary = await self._store.summary(combat_id)
+        if summary is None:
+            raise GameError("combat.not_found", 404)
+        if summary.owner_user_id != user_id:
+            raise GameError("combat.not_a_participant", 403)
+        if summary.status != ACTIVE:
+            raise GameError("combat.finished", 409)
+        await self._backend.close(summary.worker_slot, combat_id, "player")
+        self._slots.pop(combat_id, None)
 
     async def intent(
         self, user_id: int, combat_id: str, intent: dict[str, Any]

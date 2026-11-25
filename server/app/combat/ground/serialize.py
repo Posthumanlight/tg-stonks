@@ -81,6 +81,7 @@ def setup_to_json(setup: CombatSetup) -> Json:
             }
             for u in setup.units
         ],
+        "factions": list(setup.factions),
     }
 
 
@@ -94,6 +95,7 @@ def setup_from_json(data: Json) -> CombatSetup:
             )
             for u in data["units"]
         ),
+        tuple(str(f) for f in data.get("factions", ())),  # absent in older records
     )
 
 

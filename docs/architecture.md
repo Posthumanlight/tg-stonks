@@ -286,15 +286,13 @@ user.
   Menus are Preact DOM overlays (see [client](client.md)).
 - **Lobby contents (v1):**
   - **"Galaxy chart"** opens the existing `GalaxyScene` with `GET /api/world/galaxy`.
-  - **"Combat demo"** is a **placeholder**: a disabled button marked "coming soon" until
-    the combat gateway ships.
+  - **"Custom battle"** opens the army builder and deploy screen (see
+    [Custom battle flow](#custom-battle-flow)).
+  - **"Quick battle"** calls `POST /api/combats/demo`: the default armies, deployed as in
+    `demo.toml`, with no builder step.
+  - **"Resume" / "Abandon"** appear when the user has an active fight
+    (`GET /api/combats`). There is **one active hotseat per user**.
   - The username and a logout button.
-- **Later (spec'd here):**
-  - **"Combat demo"** calls `POST /api/combats/demo` and opens the combat scene. That
-    endpoint creates the user's hotseat instance of the fixed demo battle, or returns the
-    existing one: **one active hotseat per user**.
-  - `GET /api/combats` lists the user's active combats, so the lobby can offer
-    "Resume".
 
 ---
 
@@ -304,13 +302,53 @@ A combat is a self-contained, turn-based state machine (rule 7). The pure engine
 (`server/app/combat/ground/engine.py`) is wrapped by a `CombatInstance` living in one
 combat worker.
 
-### v1: hotseat demo
+### v1: hotseat custom battles
 - **Hotseat:** one user controls **every** side on one device. It is a sandbox for the
   rules, with no AI and no matchmaking.
-- **The battle** is **one fixed demo battle**, defined as data in
-  `content/combat/demo.toml` (rule 9): the board size, terrain rows (ASCII with a
-  legend), and both armies as `UnitSetup` entries. It is validated at startup like other
-  content. Changing the demo is a content change.
+- **The map is fixed:** `content/combat/demo.toml` holds the board (terrain rows as ASCII
+  with a legend) and optional deployment zones (rule 9). It is validated at startup like
+  other content.
+- **The armies and deployment are the player's.** They pick a faction and units for each
+  side and deploy them (the rules are in
+  [combat-ground › Deployment and army building](combat-ground.md#deployment-and-army-building)).
+- **Defaults:** the `[[units]]` and `factions` in `demo.toml` are the builder's prefill
+  and the quick battle's armies. They must pass the same validation as a custom setup.
+- **One-shot:** setups aren't saved as scenarios. A setup lives only in its combat's
+  record, so replay and recovery are unchanged.
+
+### Custom battle flow
+1. **Builder data.** `GET /api/combats/builder` returns a static `BuilderView`:
+   - the map (`BoardView`) and each terrain's `passable` flag;
+   - the deployment zones (`null` = the whole board);
+   - the factions, each with its unit cards (type, name key, points, footprint, model
+     range);
+   - `max_units_per_side`;
+   - the default setup.
+
+   It is built once at startup and served with a strong `ETag`, like the galaxy.
+2. **The client builds the setup.** Picking factions, units and model counts, and
+   dragging units onto the board, all happen on the client. The server sees nothing
+   until Start.
+3. **Start.** `POST /api/combats/custom {sides: [{faction, units: [{unit_type, models,
+   origin}]}]}`.
+   - The gateway validates the request in full with the pure
+     `deployment.deploy(ruleset, battle_map, armies)` (factions, counts, model ranges,
+     placement, zones), through the `CustomBattles` service
+     (`services/custom_battles.py`). `/demo` uses the same function on the defaults, once
+     at startup.
+   - A bad setup gets `400 {reason_key: setup.*, detail {side, unit}}`, and nothing
+     reaches a worker.
+   - A valid setup is placed on a worker exactly as the demo was (least-loaded, `create`
+     over IPC). The worker re-runs the engine's `validate_setup` as part of
+     `start_combat`, so a setup can never start a broken fight.
+4. **One active hotseat per user.** If the user already has an active fight, `/custom`
+   answers `409 combat.already_active`, and the client offers Resume or Abandon.
+   `/demo` keeps returning the active fight, as before. A second create from the same
+   user while one is in flight (a double tap) also gets the 409.
+5. **Abandon.** `POST /api/combats/{id}/abandon` (owner only) sets the status to
+   `abandoned` and drops the instance. The worker does the marking (IPC `close`), after
+   flushing pending actions, because it is the combat's only status writer. Later
+   requests for that combat get `combat.not_found`.
 
 ### Gateway side: `CombatRouter`
 - **Placement:** a new combat goes to the **least-loaded** worker. Load is the
@@ -403,9 +441,9 @@ for hotseat**. PvP will use `rules.activation_timer_s`.
 ### Lifecycle
 | Status | Meaning | Transition |
 |---|---|---|
-| `active` | being played | created by `POST /api/combats/demo` |
+| `active` | being played | created by `POST /api/combats/custom` or `/demo` |
 | `finished` | the engine reported an outcome | written immediately, with the outcome |
-| `abandoned` | no action for `combat_idle_timeout` (default 24 h) | idle sweeper in the worker |
+| `abandoned` | the owner abandoned it, or no action for `combat_idle_timeout` (default 24 h) | `POST /api/combats/{id}/abandon`, or the idle sweeper in the worker |
 | `aborted` | can't be replayed (content or rules changed) | during recovery |
 
 Instances that are finished, abandoned or aborted are dropped from worker memory. Their
@@ -697,6 +735,12 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
   with and without `last_seq` (Starlette `TestClient` websockets).
 - **Combat router** on `InProcessBackend`: placement, forwarding, fan-out to several
   tabs, seat errors, `IllegalAction` replies going to the sender only.
+- **Custom battles** (API tests):
+  - `/builder` content and its `ETag`/`304`;
+  - `/custom` creates a fight whose snapshot matches the request;
+  - each `setup.*` error with its `detail`;
+  - `409 combat.already_active`;
+  - abandon (owner only), after which `/custom` succeeds again.
 - **Process integration:**
   1. Start the gateway with 2 real workers.
   2. Play the demo combat.
@@ -719,6 +763,17 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 5. **WebSocket gateway:** protocol messages and codegen.
 6. **Combat scene in the client:** hotseat demo.
 7. **Load test** against the budgets.
+8. **Custom battle:**
+   1. Content: `factions.toml`, the units' `faction` field, `max_units_per_side`, and
+      the `demo.toml` defaults and optional `[deployment]` zones.
+   2. Engine setup: `deployment.py` (`deploy`, `load_battle_map`), `SetupError` with
+      `reason_key` and `side`/`unit`, `CombatSetup.factions`, and the shared placement
+      fixture (`testdata/placement_cases.json`).
+   3. API and protocol: `/builder`, `/custom`, `/{id}/abandon`; `PROTOCOL_VERSION` 3 and
+      codegen.
+   4. Client: the builder store, placement hints, `DeployScene` with drag and drop, the
+      builder overlay, and the lobby changes.
+   5. Tests at each step. The load-test bots stay on `/demo` (quick battle).
 
 ---
 

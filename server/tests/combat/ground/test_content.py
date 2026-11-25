@@ -31,6 +31,7 @@ def test_every_ability_is_used_or_a_status(ruleset) -> None:
 def _player_keys(content: Any) -> set[str]:
     keys = set()
     for group in (
+        content.factions,
         content.terrain,
         content.overlays,
         content.weapon_types,

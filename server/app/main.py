@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api import auth, combats, health, world
 from app.combat.ground.ruleset import CombatRuleset, load_ruleset
-from app.combat.ground.serialize import setup_to_json
-from app.combat.ground.setup import load_demo_setup
+from app.combat.ground.deployment import load_battle_map
 from app.persistence.combat_repo import CombatStore
 from app.services.combat_backend import CombatBackend, ProcessBackend
 from app.services.combat_router import CombatRouter
+from app.services.custom_battles import CustomBattles
 from app.workers.supervisor import Supervisor, SupervisorConfig
 from app.auth.cookies import CookiePolicy
 from app.auth.dependencies import AuthComponents, AuthLimits
@@ -132,14 +132,14 @@ def create_app(
         app.state.galaxy = world.cache_galaxy(world.build_galaxy_view(generator, pins))
 
         ruleset = load_ruleset()
+        # Content checks (the default armies, too) fail before any worker starts.
+        app.state.custom_battles = CustomBattles(ruleset, load_battle_map(ruleset))
         store = CombatStore(sessions)
         backend = (combat_backend or process_backend)(config, ruleset, store, time)
         await store.fold_slots(backend.slots)
         await backend.start()
         app.state.combat_store = store
-        app.state.combat_router = CombatRouter(
-            backend, store, setup_to_json(load_demo_setup(ruleset))
-        )
+        app.state.combat_router = CombatRouter(backend, store)
 
         app.state.ws_watchdog = ws_gateway.Watchdog(time)
         watchdog = asyncio.create_task(app.state.ws_watchdog.run())

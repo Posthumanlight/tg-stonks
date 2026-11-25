@@ -15,6 +15,8 @@ export interface ProtocolModels {
   AuthRefreshMessage: AuthRefreshMessage;
   AuthRefreshPayload: AuthRefreshPayload;
   BoardView: BoardView;
+  BuilderLimits: BuilderLimits;
+  BuilderView: BuilderView;
   ClusterView: ClusterView;
   CombatCreated: CombatCreated;
   CombatEvent: CombatEvent;
@@ -25,9 +27,13 @@ export interface ProtocolModels {
   CombatSummaryView: CombatSummaryView;
   CombatUpdate: CombatUpdate;
   CombatView: CombatView;
+  CustomCombatRequest: CustomCombatRequest;
+  DeployZone: DeployZone;
+  DeployedUnit: DeployedUnit;
   ErrorBody: ErrorBody;
   ErrorMessage: ErrorMessage;
   ErrorPayload: ErrorPayload;
+  FactionCard: FactionCard;
   GalaxyView: GalaxyView;
   GroupView: GroupView;
   HealthView: HealthView;
@@ -35,6 +41,7 @@ export interface ProtocolModels {
   HelloPayload: HelloPayload;
   LinkView: LinkView;
   LoginRequest: LoginRequest;
+  ModelRange: ModelRange;
   MoveIntent: MoveIntent;
   MoveOptionView: MoveOptionView;
   OutcomeView: OutcomeView;
@@ -42,12 +49,16 @@ export interface ProtocolModels {
   PingMessage: PingMessage;
   PongMessage: PongMessage;
   RegisterRequest: RegisterRequest;
+  SetupErrorRef: SetupErrorRef;
+  SideSetup: SideSetup;
   SkipIntent: SkipIntent;
   StarView: StarView;
   StatusView: StatusView;
   SubscribeMessage: SubscribeMessage;
   SubscribePayload: SubscribePayload;
+  TerrainCard: TerrainCard;
   TokenResponse: TokenResponse;
+  UnitCard: UnitCard;
   UnitView: UnitView;
   UnsubscribeMessage: UnsubscribeMessage;
   UnsubscribePayload: UnsubscribePayload;
@@ -128,9 +139,70 @@ export interface AuthRefreshPayload {
  * Sent once with a snapshot: terrain never changes during a combat.
  */
 export interface BoardView {
+  factions?: string[] | null;
   height: number;
   terrain: string[];
   width: number;
+}
+export interface BuilderLimits {
+  max_units_per_side: number;
+}
+export interface BuilderView {
+  board: BoardView;
+  defaults: CustomCombatRequest;
+  factions: FactionCard[];
+  limits: BuilderLimits;
+  terrain: {
+    [k: string]: TerrainCard | undefined;
+  };
+  zones: DeployZone[] | null;
+}
+export interface CustomCombatRequest {
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  sides: [SideSetup, SideSetup];
+}
+export interface SideSetup {
+  faction: string;
+  /**
+   * @maxItems 64
+   */
+  units: DeployedUnit[];
+}
+export interface DeployedUnit {
+  models: number;
+  /**
+   * @minItems 2
+   * @maxItems 2
+   */
+  origin: [number, number];
+  unit_type: string;
+}
+export interface FactionCard {
+  id: string;
+  name_key: string;
+  units: UnitCard[];
+}
+export interface UnitCard {
+  footprint: number;
+  models: ModelRange;
+  name_key: string;
+  points: number;
+  unit_type: string;
+}
+export interface ModelRange {
+  default: number;
+  max: number;
+  min: number;
+}
+export interface TerrainCard {
+  passable: boolean;
+}
+export interface DeployZone {
+  rects: [number, number, number, number][];
+  side: number;
 }
 export interface ClusterView {
   code: string;
@@ -252,8 +324,16 @@ export interface CombatSummaryView {
  * Every HTTP error: an i18n reason key and an optional developer detail.
  */
 export interface ErrorBody {
-  detail?: string | null;
+  detail?: string | SetupErrorRef | null;
   reason_key: string;
+}
+/**
+ * `detail` of a `setup.*` error: which side, and which unit in it (null for
+ * side-wide errors).
+ */
+export interface SetupErrorRef {
+  side: number | null;
+  unit: number | null;
 }
 export interface ErrorMessage {
   id?: string | null;
@@ -361,4 +441,4 @@ export interface WelcomePayload {
   user_id: number;
 }
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;

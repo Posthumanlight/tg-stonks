@@ -1,0 +1,8 @@
+# Factions: an army-building constraint (docs/combat-ground.md "Deployment and army
+# building"). Every unit in units.toml names one. The rules never read factions.
+
+[factions.concord]
+name_key = "faction.concord.name"
+
+[factions.brood]
+name_key = "faction.brood.name"

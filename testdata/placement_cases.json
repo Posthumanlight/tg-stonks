@@ -1,0 +1,18 @@
+{
+  "_doc": "Shared placement cases: run by server/tests/combat/ground/test_deployment.py (placement_issue) and client/src/builder/placement.test.ts (placementIssue), so the client's hints can't drift from the server's check. '.' = passable, '#' = impassable. Rects are [x, y, w, h]; occupied lists taken squares.",
+  "rows": ["......", "..#...", "......", "......"],
+  "cases": [
+    { "name": "free 1x1", "origin": [0, 0], "size": 1, "occupied": [], "zone": null, "expect": null },
+    { "name": "free 2x2", "origin": [3, 2], "size": 2, "occupied": [], "zone": null, "expect": null },
+    { "name": "2x2 past the right edge", "origin": [5, 0], "size": 2, "occupied": [], "zone": null, "expect": "setup.out_of_bounds" },
+    { "name": "negative origin", "origin": [-1, 0], "size": 1, "occupied": [], "zone": null, "expect": "setup.out_of_bounds" },
+    { "name": "1x1 on a wall", "origin": [2, 1], "size": 1, "occupied": [], "zone": null, "expect": "setup.blocked_square" },
+    { "name": "2x2 with one wall square", "origin": [1, 0], "size": 2, "occupied": [], "zone": null, "expect": "setup.blocked_square" },
+    { "name": "diagonal neighbour is fine", "origin": [3, 2], "size": 1, "occupied": [[4, 3]], "zone": null, "expect": null },
+    { "name": "2x2 overlapping a unit", "origin": [0, 2], "size": 2, "occupied": [[1, 3]], "zone": null, "expect": "setup.overlap" },
+    { "name": "inside a two-rect zone", "origin": [0, 0], "size": 2, "occupied": [], "zone": [[0, 0, 3, 1], [0, 1, 2, 1]], "expect": null },
+    { "name": "partly outside the zone", "origin": [3, 2], "size": 2, "occupied": [], "zone": [[0, 0, 6, 3]], "expect": "setup.outside_zone" },
+    { "name": "bounds are checked before the zone", "origin": [5, 3], "size": 2, "occupied": [], "zone": [[0, 0, 6, 4]], "expect": "setup.out_of_bounds" },
+    { "name": "the zone is checked before overlap", "origin": [3, 3], "size": 1, "occupied": [[3, 3]], "zone": [[0, 0, 6, 3]], "expect": "setup.outside_zone" }
+  ]
+}

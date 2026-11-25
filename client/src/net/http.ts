@@ -9,6 +9,8 @@ export class ApiError extends Error {
     readonly status: number, // 0 = network failure
     readonly reasonKey: string,
     readonly retryAfterS?: number,
+    /** The body's `detail`: a developer message, or e.g. a SetupErrorRef. */
+    readonly detail?: unknown,
   ) {
     super(reasonKey);
     this.name = "ApiError";
@@ -56,16 +58,24 @@ async function send(method: Method, path: string, options: RequestOptions): Prom
 
 async function toError(response: Response): Promise<ApiError> {
   let reasonKey = `http.${response.status}`;
+  let detail: unknown;
   try {
     const body: unknown = await response.json();
     if (body && typeof body === "object" && "reason_key" in body) {
       reasonKey = String((body as { reason_key: unknown }).reason_key);
+      detail = (body as { detail?: unknown }).detail;
     }
   } catch {
     // not JSON: keep the generic key
   }
-  const retryAfter = Number(response.headers.get("Retry-After"));
-  return new ApiError(response.status, reasonKey, Number.isFinite(retryAfter) ? retryAfter : undefined);
+  const header = response.headers.get("Retry-After");
+  const retryAfter = header === null ? NaN : Number(header);
+  return new ApiError(
+    response.status,
+    reasonKey,
+    Number.isFinite(retryAfter) ? retryAfter : undefined,
+    detail,
+  );
 }
 
 export async function request<T>(

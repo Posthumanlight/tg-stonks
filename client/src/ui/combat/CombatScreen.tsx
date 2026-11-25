@@ -20,7 +20,7 @@ export function CombatScreen() {
         <button type="button" class="icon" onClick={backToLobby} aria-label={t("nav.back_to_lobby")}>
           ‹
         </button>
-        <h1>{view ? t("combat.round", { round: view.round }) : t("lobby.combat_demo")}</h1>
+        <h1>{view ? t("combat.round", { round: view.round }) : t("combat.title")}</h1>
         <span class="muted">{active ? unitLabel(view?.units ?? [], active.uid) : ""}</span>
       </header>
 

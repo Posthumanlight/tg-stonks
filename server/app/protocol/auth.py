@@ -3,6 +3,7 @@
 from pydantic import Field
 
 from app.protocol.base import ProtocolModel
+from app.protocol.errors import SetupErrorRef
 
 
 class RegisterRequest(ProtocolModel):
@@ -31,4 +32,5 @@ class ErrorBody(ProtocolModel):
     """Every HTTP error: an i18n reason key and an optional developer detail."""
 
     reason_key: str
-    detail: str | None = None
+    # A developer message, or for `setup.*` errors the offending side and unit.
+    detail: str | SetupErrorRef | None = None

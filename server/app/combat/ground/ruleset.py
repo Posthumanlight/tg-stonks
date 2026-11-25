@@ -7,6 +7,7 @@ missing ability parameters, unknown content ids.
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,11 @@ class CombatRuleset:
     @property
     def rules(self):  # noqa: ANN201 - RulesContent
         return self.content.rules
+
+    @cached_property
+    def passable_terrain(self) -> dict[str, bool]:
+        """terrain id -> passable (setup placement checks)."""
+        return {tid: t.passable for tid, t in self.content.terrain.items()}
 
     def listeners_for(self, event: str) -> Listeners:
         return self.listeners.get(event, NO_LISTENERS)

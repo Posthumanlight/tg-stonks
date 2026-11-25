@@ -121,6 +121,14 @@ class CombatHost:
                 await self.store.mark(combat_id, "abandoned", reason="idle")
                 self._forget(combat_id)
 
+    async def close(self, combat_id: str, reason: str) -> None:
+        """End an active combat without an outcome (the owner abandoned it). This host
+        is the combat's only status writer, so pending actions are flushed first and a
+        finish can't race the mark. Works whether or not the combat is resident."""
+        await self.writes.flush()
+        await self.store.mark(combat_id, "abandoned", reason=reason)
+        self._forget(combat_id)
+
     # --- requests ----------------------------------------------------------------------
 
     async def intent(

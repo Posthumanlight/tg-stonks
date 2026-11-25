@@ -5,12 +5,14 @@ FastAPI handler turns it into `{reason_key, detail}` (docs/protocol.md).
 """
 
 from collections.abc import Mapping
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.combat.ground.resolver import IllegalAction
+from app.combat.ground.setup import SetupError
 
 
 class GameError(Exception):
@@ -19,7 +21,7 @@ class GameError(Exception):
         reason_key: str,
         status: int = 400,
         *,
-        detail: str | None = None,
+        detail: str | Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(reason_key)
@@ -28,15 +30,22 @@ class GameError(Exception):
         self.detail = detail
         self.headers = dict(headers or {})
 
-    def body(self) -> dict[str, str]:
-        body = {"reason_key": self.reason_key}
+    def body(self) -> dict[str, Any]:
+        body: dict[str, Any] = {"reason_key": self.reason_key}
         if self.detail:
-            body["detail"] = self.detail
+            body["detail"] = (
+                dict(self.detail) if isinstance(self.detail, Mapping) else self.detail
+            )
         return body
 
 
 def from_illegal_action(exc: IllegalAction) -> GameError:
     return GameError(exc.reason, 400)
+
+
+def from_setup_error(exc: SetupError) -> GameError:
+    """A rejected setup, located so the client can mark the token (SetupErrorRef)."""
+    return GameError(exc.reason_key, 400, detail={"side": exc.side, "unit": exc.unit})
 
 
 async def _handle_game_error(request: Request, exc: Exception) -> JSONResponse:

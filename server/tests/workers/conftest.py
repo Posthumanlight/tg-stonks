@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.combat.ground.ruleset import CombatRuleset, load_ruleset
 from app.combat.ground.serialize import setup_to_json
-from app.combat.ground.setup import load_demo_setup
+from app.combat.ground.deployment import load_demo_setup
 from app.persistence.combat_repo import CombatStore
 from app.persistence.db import Base, create_engine
 from app.persistence.models import User

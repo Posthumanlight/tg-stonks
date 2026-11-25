@@ -8,11 +8,12 @@ import { combat } from "../../state/combat";
 export function CombatLog() {
   const events = combat.log.value;
   const units = combat.view.value?.units ?? [];
+  const factions = combat.board.value?.factions;
   const end = useRef<HTMLLIElement>(null);
   useEffect(() => end.current?.scrollIntoView({ block: "end" }), [events]);
 
   const lines = events.flatMap((event) => {
-    const text = formatEvent(event, units);
+    const text = formatEvent(event, units, factions);
     return text ? [{ seq: event.seq, text }] : [];
   });
   return (

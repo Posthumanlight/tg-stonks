@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel
 
-from app.protocol import combat, ws
+from app.protocol import builder, combat, ws
 from app.protocol.auth import (
     ErrorBody,
     LoginRequest,
@@ -27,6 +27,8 @@ PROTOCOL_MODELS: tuple[type[BaseModel], ...] = (
     GalaxyView,
     CombatCreated,
     CombatSummaryView,
+    builder.BuilderView,
+    builder.CustomCombatRequest,
     combat.CombatSnapshot,
     combat.CombatUpdate,
     combat.MoveIntent,

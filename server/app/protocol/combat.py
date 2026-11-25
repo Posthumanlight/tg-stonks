@@ -22,6 +22,9 @@ class BoardView(ProtocolModel):
     width: int
     height: int
     terrain: list[str]  # row-major terrain ids
+    factions: list[str] | None = (
+        None  # faction id per side (side labels); null: unknown
+    )
 
 
 class GroupView(ProtocolModel):
@@ -177,10 +180,13 @@ class CombatIntentEnvelope(ProtocolModel):
 # --- converters (pure) -----------------------------------------------------------------
 
 
-def board_view(state: CombatState) -> BoardView:
+def board_view(state: CombatState, factions: tuple[str, ...] = ()) -> BoardView:
     board = state.board
     return BoardView(
-        width=board.width, height=board.height, terrain=list(board.terrain)
+        width=board.width,
+        height=board.height,
+        terrain=list(board.terrain),
+        factions=list(factions) or None,
     )
 
 

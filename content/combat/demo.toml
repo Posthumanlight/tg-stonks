@@ -1,7 +1,12 @@
-# The fixed hotseat demo battle (docs/architecture.md "Combat instances").
-# One player controls both sides. Changing this file changes only NEW demo combats:
-# running combats keep the setup stored in their record.
+# The custom-battle map (docs/combat-ground.md "Deployment and army building").
+# - The board: `rows` + `legend`.
+# - `factions` + `[[units]]`: the default armies, i.e. the builder's prefill and the
+#   quick battle (POST /api/combats/demo). They pass the same checks as a custom setup.
+# - `[deployment]` (optional): zones per side. Absent = the whole board is allowed.
+#   Example: [deployment] zones = [{ side = 0, rects = [[0, 0, 24, 6]] }, ...]
+# Changing this file changes only NEW combats: running ones keep the setup in their record.
 
+factions = ["concord", "brood"]  # default faction per side
 width = 24
 height = 24
 legend = { "." = "open", "#" = "wall", "=" = "low_wall", "r" = "rubble", "f" = "forest", "~" = "deep_water" }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { unit } from "./fixtures";
-import { formatEvent, outcomeText, unitLabel } from "./log";
+import { formatEvent, outcomeText, sideLabel, unitLabel } from "./log";
 
 const units = [unit({ uid: 1 }), unit({ uid: 2, side: 1, unit_type: "ravager_swarm" })];
 const ev = (type: string, data: Record<string, unknown>, seq = 0) => ({ type, seq, data });
@@ -64,5 +64,12 @@ describe("labels", () => {
     expect(outcomeText(false, [])).toBe("The battle ends in a draw.");
     expect(outcomeText(true, [0])).toBe("The battle ends in a draw.");
     expect(outcomeText(false, [0, 2])).toBe("Side 1, Side 3 wins.");
+  });
+
+  it("names sides by faction, numbering a mirror match", () => {
+    expect(sideLabel(1, ["concord", "brood"])).toBe("Brood");
+    expect(sideLabel(1, ["concord", "concord"])).toBe("Concord 2");
+    expect(sideLabel(1, null)).toBe("Side 2");
+    expect(outcomeText(false, [0], ["concord", "brood"])).toBe("Concord wins.");
   });
 });

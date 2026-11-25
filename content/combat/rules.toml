@@ -7,6 +7,7 @@ round_limit = 12                      # after this round, the side with more sur
 draw_margin_percent = 10              # point totals within this % of the leader are a draw
 activation_timer_s = 45               # enforced by the server shell (auto-Skip), not the engine
 max_models_per_unit = 100             # hard cap on any unit's size
+max_units_per_side = 12               # custom battles: server-safety cap, not balance
 base_reactions = 1                    # reactions per unit per round (opportunity attacks)
 opportunity_attack_hit_percent = 100  # hits of an opportunity attack, % of a normal attack
 friendly_units_screen = true          # do the shooter's own units screen its shots?

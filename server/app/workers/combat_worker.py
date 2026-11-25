@@ -59,6 +59,10 @@ def build_dispatcher(host: CombatHost) -> Dispatcher[None]:
     async def subscribe(_: None, msg: ipc.Subscribe) -> dict:
         return await host.subscribe(msg.combat_id, msg.user_id, msg.last_seq)
 
+    @dispatcher.on("close")
+    async def close(_: None, msg: ipc.Close) -> None:
+        await host.close(msg.combat_id, msg.reason)
+
     return dispatcher
 
 

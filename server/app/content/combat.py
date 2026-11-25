@@ -66,6 +66,7 @@ class RulesContent(_Model):
     draw_margin_percent: int = Field(ge=0, le=100)
     activation_timer_s: int = Field(ge=1)
     max_models_per_unit: int = Field(ge=1)
+    max_units_per_side: int = Field(ge=1)  # custom battles; a server-safety cap
     base_reactions: int = Field(ge=0)
     opportunity_attack_hit_percent: int = Field(ge=0)
     friendly_units_screen: bool
@@ -161,8 +162,13 @@ class ModelsRange(_Model):
     max: int = Field(ge=1)
 
 
+class Faction(_Model):
+    name_key: str
+
+
 class Unit(_Model):
     name_key: str
+    faction: str  # army building only; the rules never read it
     points: int = Field(ge=0)
     speed: int = Field(ge=0)
     movement: int = Field(ge=0)
@@ -273,6 +279,7 @@ class Ability(_Model):
 
 class CombatContent(_Model):
     rules: RulesContent
+    factions: dict[str, Faction] = Field(min_length=1)
     terrain: dict[str, TerrainType] = Field(min_length=1)
     overlays: dict[str, OverlayType] = Field(default_factory=dict)
     tags: tuple[str, ...]
@@ -298,6 +305,8 @@ class CombatContent(_Model):
                 raise ValueError(f"weapon {wid!r}: unknown type {weapon.type!r}")
             self._check_refs(f"weapon {wid!r}", weapon.abilities, {"weapon"})
         for uid, unit in self.units.items():
+            if unit.faction not in self.factions:
+                raise ValueError(f"unit {uid!r}: unknown faction {unit.faction!r}")
             if unknown := set(unit.tags) - set(self.tags):
                 raise ValueError(f"unit {uid!r}: unknown tags {sorted(unknown)}")
             if unit.models.max > self.rules.max_models_per_unit:
@@ -328,6 +337,7 @@ class CombatContent(_Model):
 
 TOP_LEVEL_FILES = (
     "rules",
+    "factions",
     "terrain",
     "tags",
     "weapon_types",
@@ -352,6 +362,7 @@ def load_raw_combat_content(directory: Path = DEFAULT_CONTENT_DIR) -> dict[str, 
                 abilities[aid] = ability
     return {
         "rules": files["rules"],
+        "factions": files["factions"].get("factions", {}),
         "terrain": files["terrain"].get("terrain", {}),
         "overlays": files["terrain"].get("overlays", {}),
         "tags": files["tags"].get("tags", []),
@@ -376,13 +387,31 @@ class DemoUnit(_Model):
     models: int | None = Field(default=None, ge=1)
 
 
-class DemoBattle(_Model):
-    """`content/combat/demo.toml`: the fixed hotseat demo (board rows + armies)."""
+class ZoneDef(_Model):
+    side: int = Field(ge=0)
+    rects: tuple[tuple[int, int, int, int], ...] = Field(min_length=1)  # x, y, w, h
 
+    @model_validator(mode="after")
+    def _sizes(self) -> "ZoneDef":
+        if any(x < 0 or y < 0 or w < 1 or h < 1 for x, y, w, h in self.rects):
+            raise ValueError("zone rects need x, y >= 0 and w, h >= 1")
+        return self
+
+
+class DeploymentDef(_Model):
+    zones: tuple[ZoneDef, ...] = Field(min_length=1)
+
+
+class DemoBattle(_Model):
+    """`content/combat/demo.toml`: the custom-battle map (board rows, optional
+    deployment zones) and the default armies (faction per side + units)."""
+
+    factions: tuple[str, ...] = Field(min_length=2)
     width: int = Field(ge=1)
     height: int = Field(ge=1)
     legend: dict[str, str]
     rows: tuple[str, ...]
+    deployment: DeploymentDef | None = None
     units: tuple[DemoUnit, ...] = Field(min_length=2)
 
     @model_validator(mode="after")
@@ -393,6 +422,12 @@ class DemoBattle(_Model):
             raise ValueError("rows must be `height` strings of `width` characters")
         if any(len(key) != 1 for key in self.legend):
             raise ValueError("legend keys must be single characters")
+        if any(u.side >= len(self.factions) for u in self.units):
+            raise ValueError("every unit's side needs an entry in `factions`")
+        if self.deployment is not None:
+            sides = sorted(z.side for z in self.deployment.zones)
+            if sides != list(range(len(self.factions))):
+                raise ValueError("deployment: exactly one zone per side")
         return self
 
 

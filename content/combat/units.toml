@@ -6,6 +6,7 @@
 
 [units.line_troopers]
 name_key = "unit.line_troopers.name"
+faction = "concord"
 points = 90
 speed = 5
 movement = 6
@@ -39,6 +40,7 @@ casualty_priority = 2
 
 [units.heavy_team]
 name_key = "unit.heavy_team.name"
+faction = "concord"
 points = 110
 speed = 3
 movement = 4
@@ -65,6 +67,7 @@ casualty_priority = 1
 
 [units.warden]
 name_key = "unit.warden.name"
+faction = "concord"
 points = 80
 speed = 6
 movement = 6
@@ -84,6 +87,7 @@ weapons = ["sidearm", "shock_maul"]
 
 [units.bastion_walker]
 name_key = "unit.bastion_walker.name"
+faction = "concord"
 points = 160
 speed = 2
 movement = 4
@@ -104,6 +108,7 @@ weapons = ["mortar", "flame_projector"]
 
 [units.ravager_swarm]
 name_key = "unit.ravager_swarm.name"
+faction = "brood"
 points = 100
 speed = 8
 movement = 8
@@ -122,6 +127,7 @@ weapons = ["rending_claws"]
 
 [units.spitter_brood]
 name_key = "unit.spitter_brood.name"
+faction = "brood"
 points = 85
 speed = 6
 movement = 6
@@ -140,6 +146,7 @@ weapons = ["spine_spitter", "talons"]
 
 [units.brood_tyrant]
 name_key = "unit.brood_tyrant.name"
+faction = "brood"
 points = 180
 speed = 4
 movement = 5

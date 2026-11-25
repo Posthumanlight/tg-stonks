@@ -107,6 +107,7 @@ sets. Overlays are defined in the same file under `[overlays.*]`.
 | `footprint` | `1` (1×1) or `2` (2×2) |
 | `models` | `{ min, max }` unit size. Capped by `rules.max_models_per_unit` |
 | `los_profile` | `none / screen / block` (see [LoS](#line-of-sight)). Default: `block` for a 2×2 footprint or `vehicle`/`monster` armor, otherwise `screen` |
+| `faction` | Required faction id (`factions.toml`). Limits which armies may field the unit (see [Army building](#army-building)) |
 | `points` | Unit value: used for army building and for deciding fights that hit the round limit |
 | `abilities` | Unit abilities: ids, or `{ id, …params }` |
 | `name_key` | i18n key |
@@ -117,6 +118,7 @@ A unit's models are split into **groups** that share a role, HP and weapons:
 ```toml
 [units.line_troopers]
 name_key = "unit.line_troopers.name"
+faction = "concord"
 points = 90
 speed = 5
 movement = 6
@@ -269,6 +271,75 @@ The unit then takes any sequence of these actions:
 - At `rules.round_limit`, the side with more surviving `points` wins. Within
   `rules.draw_margin_percent`, the result is a draw.
 - Objectives (holding squares and so on) are future work.
+
+---
+
+## Deployment and army building
+
+How a fight's `CombatSetup` is made before round 1. v1 is the **custom battle**: one
+player builds both armies and deploys them on the fixed demo map, then plays the fight in
+hotseat (see [architecture › Custom battle flow](architecture.md#custom-battle-flow)).
+
+### Factions — `content/combat/factions.toml`
+- Each faction has an id and a `name_key` (`faction.<id>.name` in both locale files).
+  The starter factions are `concord` and `brood`.
+- Every unit type has a **required** `faction` field. It is checked against
+  `factions.toml` at content load, so the server fails fast on a typo.
+- Factions are an army-building constraint only. **The rules never read them**: no hook,
+  targeting check or damage table looks at a faction.
+
+### Army building
+| Rule | Value |
+|---|---|
+| Sides | Exactly **2** in the builder (the engine supports N) |
+| Faction | One per side. **Mirror matches are allowed** (both sides may pick the same faction) |
+| Unit types | Only the side's faction |
+| Units per side | 1 to `rules.max_units_per_side` (default 12). This is a server-safety cap that protects the engine's time budget, not a balance rule |
+| Models per unit | Any count within the type's `models.min..max`. The `fill` group absorbs the difference, as `build_unit` already does |
+| Points | Each side's total is shown and stored. There is **no cap** in v1 |
+
+### Placement
+- **Checks** (all existing, from `validate_setup`):
+  - every footprint square is in bounds and passable;
+  - no two units overlap.
+- **Deployment zones:** when the map defines zones, every footprint square must also be
+  inside the side's zone.
+  - **v1 has no zones.** A map without a `[deployment]` section allows the whole board.
+  - Zones are rectangles per side in the map file:
+    `zones = [{ side = 0, rects = [[x, y, w, h], …] }]`.
+  - Adding zones to a map is **a content change only**: the server check, the builder
+    view and the client highlight already read them.
+- **Deployment index**, the last turn-order tie-break, is the order in `setup.units`:
+  side 0's units in the order they were placed, then side 1's.
+
+### Validation and errors
+- **Validation is server-side.** A custom setup is validated in full before a combat is
+  created: factions, unit types, model counts, unit counts, placement and zones. The
+  client's placement hints are a convenience; the server is the authority (CLAUDE.md
+  rule 1).
+- **Errors.** `SetupError` carries a `reason_key` (i18n) and a `detail {side, unit}`
+  naming the offending entry, so the client can mark that token.
+
+| Reason key | Meaning |
+|---|---|
+| `setup.unknown_faction` | the faction id doesn't exist |
+| `setup.empty_side` | a side has no units |
+| `setup.too_many_units` | a side exceeds `max_units_per_side` |
+| `setup.unknown_unit` | the unit type doesn't exist |
+| `setup.wrong_faction` | the unit type belongs to another faction |
+| `setup.models_out_of_range` | the model count is outside `models.min..max` |
+| `setup.out_of_bounds` | part of the footprint is off the board |
+| `setup.blocked_square` | part of the footprint is on impassable terrain |
+| `setup.overlap` | the footprint overlaps another unit |
+| `setup.outside_zone` | part of the footprint is outside the side's deployment zone |
+
+### The record
+- **`CombatSetup` gains `factions: tuple[str, ...]`** (one per side). It is used only for
+  side labels in views.
+- Because the rules ignore it, `COMBAT_RULES_VERSION` doesn't change. Old records without
+  it read as "no faction".
+- The stored setup is the full board plus the deployed units, so replay and recovery work
+  exactly as before.
 
 ---
 
@@ -734,7 +805,9 @@ def deal_hits_in_radius(ctx: AbilityCast, p: HitsInRadius) -> None:
 ```
 engine.py         public API: start_combat, legal_actions, apply_action, replay,
                   CombatRecord, COMBAT_RULES_VERSION, IllegalAction, SetupError
-setup.py          CombatSetup / UnitSetup, build_unit (fill group), board validation
+setup.py          CombatSetup / UnitSetup, build_unit (fill group), board validation,
+                  custom-setup validation (factions, unit counts, zones; SetupError
+                  with reason_key + detail)
 state.py          frozen dataclasses: UnitState, GroupState, StatusState, OverlayState,
                   Activation, Outcome, CombatState (round/wait queues, active unit)
 board.py          Square, Board (from_rows for ASCII maps), footprints, Chebyshev distance
@@ -772,7 +845,7 @@ A v1 greedy AI (`ai.py`, `choose_action(state, rng)`) is not written yet.
   [architecture › Combat instances](architecture.md#combat-instances), which covers:
   - placement on workers;
   - seat checks;
-  - the hotseat demo from `content/combat/demo.toml`;
+  - hotseat custom battles on the map from `content/combat/demo.toml`;
   - timers;
   - persistence of the record (setup, seed, content hash, rules version, actions) with
     write-behind;
@@ -803,7 +876,9 @@ A v1 greedy AI (`ai.py`, `choose_action(state, rng)`) is not written yet.
 
 | File | Contents |
 |---|---|
-| `rules.toml` | `default_board` (32×32), `board_min`, `board_max`, `round_limit`, `draw_margin_percent`, `activation_timer_s`, `max_models_per_unit`, `opportunity_attack_hit_percent`, `friendly_units_screen`, `first_round_no_attacks`, `max_trigger_depth` |
+| `rules.toml` | `default_board` (32×32), `board_min`, `board_max`, `round_limit`, `draw_margin_percent`, `activation_timer_s`, `max_models_per_unit`, `max_units_per_side`, `opportunity_attack_hit_percent`, `friendly_units_screen`, `first_round_no_attacks`, `max_trigger_depth` |
+| `factions.toml` | factions (`name_key`); every unit names one |
+| `demo.toml` | the custom-battle map (ASCII rows + legend), the default faction per side, the default armies (`[[units]]`: the builder's prefill and the quick battle), and optional `[deployment]` zones |
 | `terrain.toml` | terrain types + overlays |
 | `tags.toml` | the allowed unit tags |
 | `weapon_types.toml` | weapon types (name keys) |
@@ -814,7 +889,7 @@ A v1 greedy AI (`ai.py`, `choose_action(state, rng)`) is not written yet.
 
 All player-facing names use i18n keys in `locales/en.json` and `locales/ua.json`.
 
-The starter roster is original sample data for two factions:
+The starter roster is original sample data for two factions (the `faction` field):
 - **Concord:** `line_troopers`, `heavy_team`, `warden` (a character), and the 2×2 vehicle
   `bastion_walker`.
 - **Brood:** `ravager_swarm` (10–30 models), `spitter_brood`, and the 2×2 monster
@@ -888,6 +963,13 @@ Details settled while building the engine. They are binding until changed here:
   - the import scan finds no forbidden imports in `abilities/`.
 - **Every ability in content has a scenario test.** A small board where the ability must
   visibly change the outcome. Content CI fails if any ability lacks one.
+- **Setup validation:**
+  - every `setup.*` reason key has a test, and the `detail` names the right side and
+    unit;
+  - content load rejects a unit with a missing or unknown `faction`;
+  - the default armies in `demo.toml` pass the custom-setup validation;
+  - one shared JSON fixture of placement cases is run by both pytest and vitest, so the
+    client's placement hints can't drift from the server's check.
 
 ---
 
@@ -966,8 +1048,10 @@ above.
 - Squad persistence: veterancy, carrying casualties over between fights, and
   reinforcement cost (economy).
 - Objectives and victory conditions beyond annihilation or points.
-- Deployment rules and zones on variable board sizes; reserves and deep strike
-  (`teleport` plus a deployment hook).
+- Deployment zones: the zone shapes for each map, and how zones scale with the board
+  size once maps vary.
+- Reserves and deep strike (`teleport` plus a deployment hook).
+- A points cap per battle, and army presets (saved armies).
 - Leaders attaching to units.
 - Overwatch and other reactions beyond opportunity attacks (a `reaction_window` event).
 - PvP rules: per-activation timer values, AFK and forfeit, matchmaking.

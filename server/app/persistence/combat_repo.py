@@ -43,10 +43,22 @@ class StoredCombat:
 @dataclass(frozen=True, slots=True)
 class CombatSummary:
     combat_id: str
+    owner_user_id: int
     mode: str
     status: str
     worker_slot: int
     created_at: datetime
+
+    @classmethod
+    def of(cls, c: Combat) -> "CombatSummary":
+        return cls(
+            str(c.combat_id),
+            c.owner_user_id,
+            c.mode,
+            c.status,
+            c.worker_slot,
+            c.created_at,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,12 +186,17 @@ class CombatStore:
             rows = (
                 await session.scalars(query.order_by(Combat.created_at.desc()))
             ).all()
-            return [
-                CombatSummary(
-                    str(c.combat_id), c.mode, c.status, c.worker_slot, c.created_at
-                )
-                for c in rows
-            ]
+            return [CombatSummary.of(c) for c in rows]
+
+    async def summary(self, combat_id: str) -> CombatSummary | None:
+        """One combat's row without its record (ownership and status checks)."""
+        try:
+            key = uuid.UUID(combat_id)
+        except ValueError:
+            return None
+        async with self._sessions() as session:
+            combat = await session.get(Combat, key)
+            return CombatSummary.of(combat) if combat else None
 
     async def slot_of(self, combat_id: str) -> int | None:
         async with self._sessions() as session:

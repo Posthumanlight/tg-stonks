@@ -120,13 +120,18 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
   transport.onWelcome(() => void subscribe()); // every (re)connect resubscribes
   transport.onStatus((status) => (connection.value = status));
 
-  /** Create (or resume) the demo fight and connect to it. Throws the HTTP error. */
-  async function openDemo(): Promise<void> {
-    const { combat_id } = await api.createDemo();
+  /** Connect to a fight by id (just created, or resumed from the lobby). */
+  function open(id: string): void {
     reset();
-    combatId.value = combat_id;
+    combatId.value = id;
     if (transport.status === "open") void subscribe();
     else transport.connect();
+  }
+
+  /** Create (or resume) the quick battle and connect to it. Throws the HTTP error. */
+  async function openDemo(): Promise<void> {
+    const { combat_id } = await api.createDemo();
+    open(combat_id);
   }
 
   function leave(): void {
@@ -211,6 +216,7 @@ export function createCombatStore(transport: CombatTransport, api: CombatApi) {
     shownUnit,
     activeUnit,
     marks,
+    open,
     openDemo,
     leave,
     act,

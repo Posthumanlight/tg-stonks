@@ -6,6 +6,7 @@ import { render } from "preact";
 import { hideGame, showGame } from "./game/host";
 import { initI18n, t } from "./i18n";
 import { bootstrapAuth, currentUser } from "./state/auth";
+import { builder } from "./state/builder";
 import { combat } from "./state/combat";
 import { ensureGalaxy } from "./state/galaxy";
 import { screen, screenAfterAuth } from "./state/screen";
@@ -29,6 +30,9 @@ effect(() => {
   if (current === "galaxy") {
     showGame(gameRoot, "galaxy");
     ensureGalaxy();
+  } else if (current === "builder") {
+    showGame(gameRoot, "builder");
+    void builder.load();
   } else if (current === "combat") {
     showGame(gameRoot, "combat");
   } else {
@@ -36,6 +40,7 @@ effect(() => {
   }
   // However the combat screen was left (back button, sign-out), drop the fight's socket.
   if (current !== "combat" && combat.combatId.peek() !== null) combat.leave();
+  if (current !== "builder") builder.leave(); // the draft itself is kept
 });
 
 // Signing in or out (including a session that expires) moves between screens.

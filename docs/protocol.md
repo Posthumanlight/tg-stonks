@@ -37,11 +37,34 @@ and versioning. Server processes and the lifecycle of connections and combats ar
 | `POST /api/auth/logout-all` | Bearer | `204` | revokes every session of the user |
 | `GET /api/auth/me` | Bearer | `{user}` | |
 | `GET /api/world/galaxy` | Bearer | `GalaxyView` | built once at startup; strong `ETag`, `Cache-Control: no-cache`, `304` on `If-None-Match` |
-| `POST /api/combats/demo` | Bearer | `CombatCreated {combat_id}` | creates the user's hotseat demo combat, or returns the active one |
+| `GET /api/combats/builder` | Bearer | `BuilderView` | static data for the custom-battle builder (below); strong `ETag`, `304` on `If-None-Match` |
+| `POST /api/combats/custom` | Bearer | `201 CombatCreated {combat_id}` | body `CustomCombatRequest`. `400 setup.*` with `detail {side, unit}`; `409 combat.already_active` |
+| `POST /api/combats/demo` | Bearer | `CombatCreated {combat_id}` | quick battle: the default armies from `demo.toml`, or the user's active fight if there is one |
+| `POST /api/combats/{id}/abandon` | Bearer | `204` | owner only (`403 combat.not_a_participant`); `409 combat.finished` if it isn't active |
 | `GET /api/combats` | Bearer | `[CombatSummaryView {combat_id, mode, status, created_at}]` | the user's combats, newest first |
 
 HTTP errors use the body `{reason_key, detail?}` with a fitting status (400, 401, 403,
 404, 409, 429 + `Retry-After`, 503).
+
+### Custom battle models
+The models are in `server/app/protocol/builder.py`. The rules behind them are in
+[combat-ground › Deployment and army building](combat-ground.md#deployment-and-army-building).
+
+| Model | Fields |
+|---|---|
+| `BuilderView` | `board: BoardView` (its `factions` is `null` here), `terrain: {id: TerrainCard {passable}}`, `zones: [DeployZone] \| null`, `factions: [FactionCard]`, `limits {max_units_per_side}`, `defaults: CustomCombatRequest` |
+| `DeployZone` | `side`, `rects: [[x, y, w, h]]`. `zones: null` means the whole board is allowed |
+| `FactionCard` | `id`, `name_key`, `units: [UnitCard]` |
+| `UnitCard` | `unit_type`, `name_key`, `points`, `footprint` (1 or 2), `models {min, max, default}` |
+| `CustomCombatRequest` | `sides: [SideSetup]`. Exactly 2; the side number is the list index |
+| `SideSetup` | `faction`, `units: [DeployedUnit]` |
+| `DeployedUnit` | `unit_type`, `models`, `origin: [x, y]` (the footprint's top-left square) |
+
+- A setup error answers `400 {reason_key, detail: {side, unit}}`. `unit` is the index in
+  that side's `units`, or `null` for side-wide errors (`setup.empty_side`,
+  `setup.too_many_units`, `setup.unknown_faction`).
+- The points totals aren't sent. The client sums `UnitCard.points` itself, because points
+  are a display-only figure in v1.
 
 ## WebSocket
 
@@ -64,7 +87,10 @@ Every frame is one JSON object:
    before the access token expires.
 4. **Reconnect:** on close, reconnect with backoff and re-subscribe with `last_seq`.
 
-### Messages (`PROTOCOL_VERSION` 2)
+### Messages (`PROTOCOL_VERSION` 3)
+Version 3 adds the custom battle models and `BoardView.factions`; the WebSocket messages
+are otherwise unchanged from version 2.
+
 The models are in `server/app/protocol/ws.py` (messages) and
 `server/app/protocol/combat.py` (combat payloads).
 
@@ -80,7 +106,7 @@ The models are in `server/app/protocol/ws.py` (messages) and
 | S → C | `ack` | `id` (no payload) | the request was accepted; for an action, it arrives **after** that action's `combat.events` |
 | S → C | `error` | `{reason_key, detail?}` + `id` | `id` is set when it answers a request |
 | S → C | `pong` | `id` | |
-| S → C | `combat.snapshot` | `CombatSnapshot {board, view, legal}` | the only message carrying the board (terrain never changes during a fight) |
+| S → C | `combat.snapshot` | `CombatSnapshot {board, view, legal}` | the only message carrying the board (terrain never changes during a fight). `board` (`BoardView {width, height, terrain, factions}`) includes each side's faction id, or `null` for old records, for side labels |
 | S → C | `combat.events` | `CombatUpdate {combat_id, from_seq, events[], view, legal}` | pushed to every subscriber after each action. `view` is the new state, so clients render from it and never re-implement rules; `events` (each with its `seq`) are for animation and the log |
 
 Combat error reasons:
@@ -89,7 +115,11 @@ Combat error reasons:
 - `combat.not_found`;
 - `combat.finished`;
 - `combat.unavailable`: the worker is restarting; retry;
+- `combat.already_active`: the user already has an active hotseat (resume or abandon
+  it first);
 - `combat.bad_setup`;
+- `setup.*`: a custom setup was rejected (the full list is in
+  [combat-ground › Validation and errors](combat-ground.md#validation-and-errors));
 - every engine reason key (`move.forbidden.*`, `attack.forbidden.*`,
   `ability.forbidden.*`, …).
 
