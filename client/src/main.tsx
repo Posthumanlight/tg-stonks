@@ -5,7 +5,6 @@ import { render } from "preact";
 
 import { hideGame, showGame } from "./game/host";
 import { initI18n, t } from "./i18n";
-import { initPlatform } from "./platform/telegram";
 import { bootstrapAuth, currentUser } from "./state/auth";
 import { combat } from "./state/combat";
 import { ensureGalaxy } from "./state/galaxy";
@@ -18,12 +17,11 @@ function mustGet(id: string): HTMLElement {
   return element;
 }
 
-const platform = initPlatform();
-initI18n(platform.languageCode);
+initI18n();
 document.title = t("app.title");
 
 const gameRoot = mustGet("game");
-render(<App platform={platform} />, mustGet("ui"));
+render(<App />, mustGet("ui"));
 
 // Canvas screens show the Phaser game; DOM-only screens hide it.
 effect(() => {

@@ -16,7 +16,7 @@ export const DEFAULT_LOCALE: Locale = "en";
 /** Current UI language. Reading it inside a component re-renders on change. */
 export const locale = signal<Locale>(DEFAULT_LOCALE);
 
-/** Map language tags (e.g. Telegram's "uk", navigator's "en-GB") to a supported locale. */
+/** Map language tags (e.g. "uk", "en-GB") to a supported locale. */
 export function resolveLocale(tags: readonly (string | undefined)[]): Locale {
   for (const tag of tags) {
     const primary = tag?.toLowerCase().split(/[-_]/)[0];
@@ -41,8 +41,8 @@ export function translate(
   );
 }
 
-export function initI18n(languageCode: string | undefined): void {
-  locale.value = resolveLocale([languageCode, ...navigator.languages]);
+export function initI18n(): void {
+  locale.value = resolveLocale(navigator.languages);
   document.documentElement.lang = locale.value === "ua" ? "uk" : locale.value;
 }
 

@@ -15,7 +15,7 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": ["vite/client", "telegram-web-app"],
+    "types": ["vite/client"],
     "paths": {
       "@locales/*": ["../locales/*"]
     }

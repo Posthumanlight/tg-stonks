@@ -1,7 +1,4 @@
-import { useEffect } from "preact/hooks";
-
 import { t } from "../../i18n";
-import type { Platform } from "../../platform/telegram";
 import type { GalaxyView, StarView } from "../../protocol";
 import {
   galaxyState,
@@ -12,12 +9,8 @@ import {
 } from "../../state/galaxy";
 import { goTo } from "../../state/screen";
 
-interface Props {
-  platform: Platform;
-}
-
 /** DOM overlay above the galaxy chart. Only panels capture input (see styles.css). */
-export function GalaxyOverlay({ platform }: Props) {
+export function GalaxyOverlay() {
   const state = galaxyState.value;
   const star = selectedStar.value;
 
@@ -54,7 +47,7 @@ export function GalaxyOverlay({ platform }: Props) {
       {state.status === "ready" && !star && <p class="hint">{t("galaxy.hint")}</p>}
 
       {state.status === "ready" && star && (
-        <StarSheet galaxy={state.galaxy} star={star} platform={platform} />
+        <StarSheet galaxy={state.galaxy} star={star} />
       )}
     </>
   );
@@ -63,18 +56,12 @@ export function GalaxyOverlay({ platform }: Props) {
 interface StarSheetProps {
   galaxy: GalaxyView;
   star: StarView;
-  platform: Platform;
 }
 
-function StarSheet({ galaxy, star, platform }: StarSheetProps) {
+function StarSheet({ galaxy, star }: StarSheetProps) {
   const close = () => {
     selectedStarIndex.value = null;
   };
-  // Inside Telegram, the native back button closes the sheet too.
-  useEffect(() => {
-    platform.setBackButton(close);
-    return () => platform.setBackButton(null);
-  }, [platform]);
 
   const counts = starLinkCounts.value;
   const cluster = galaxy.clusters[star.cluster];

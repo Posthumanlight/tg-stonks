@@ -27,7 +27,8 @@ and the wire format in [protocol](protocol.md).
 - **Auth.** Users log in with username and password. The server issues JWT access tokens
   (with `joserfc`, the Authlib project's JOSE library) and a rotating refresh token in an
   httpOnly cookie.
-  - Telegram sign-in is **dropped for now**.
+  - Telegram (Mini App and sign-in) is **postponed until after launch**; there is no
+    Telegram code in the client or server.
   - Social login (Authlib's OAuth client) is designed in but not built.
 - **Persistence.** The Supabase Postgres connection is unchanged (see
   [Database](#database)). Writes from gameplay are batched (write-behind, rule 5).
@@ -249,8 +250,7 @@ process.
 - **Social login:** Authlib's Starlette OAuth client for Google or Discord. A successful
   callback finds or creates the user through `identities`, then issues the same
   access/refresh pair.
-- **Telegram:** initData HMAC verification could return as one more provider (it was
-  dropped for now).
+- **Telegram (after launch):** initData HMAC verification returns as one more provider.
 
 ---
 
@@ -738,4 +738,4 @@ One endpoint, `/ws`, for all realtime traffic. The message catalogue and envelop
 - **Worker GC tuning.** Pauses grow with resident fights (about 43 ms per full
   collection at 180 fights). Options: raise the GC thresholds, `gc.freeze()` after
   loading, or slimmer event logs (trimming events older than the catch-up window).
-- Bringing back Telegram sign-in, and adding social login via Authlib.
+- After launch: Telegram Mini App and sign-in. Social login via Authlib.

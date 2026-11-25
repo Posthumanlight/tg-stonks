@@ -3,8 +3,8 @@
 Mobile-first browser MMO: 2D pixel-art space exploration. Procedurally generated galaxy,
 production-chain economy, ship travel + planet expeditions, turn-based ship combat and
 turn-based squad combat (per-unit Speed initiative HOMM-style, multi-model 40k-style units,
-abilities as event-hooked Python functions). Runs as a mobile web app
-and as a Telegram Mini App.
+abilities as event-hooked Python functions). Runs as a mobile web app; Telegram Mini App
+support comes after launch (no Telegram code until then).
 
 Design lives in `docs/` — read the relevant doc before touching a system:
 [architecture](docs/architecture.md) · [protocol](docs/protocol.md) ·
@@ -106,8 +106,8 @@ docs/         design docs
     SQLite runs in WAL mode. No Supabase client SDK in game code — Postgres via SQLAlchemy only.
 11. **Auth.** Own username + password login (argon2id). The server issues short-lived JWT
     access tokens (memory only on the client, Bearer / WS `hello`) and a rotating refresh
-    token in an httpOnly `__Host-` cookie with reuse detection. Telegram initData sign-in is
-    dropped for now; new sign-in methods plug in via an `identities` table (see
+    token in an httpOnly `__Host-` cookie with reuse detection. Telegram sign-in comes after
+    launch; new sign-in methods plug in via an `identities` table (see
     [architecture](docs/architecture.md#authentication)).
 
 ## Protocol

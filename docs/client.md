@@ -1,6 +1,7 @@
 # Client
 
-The browser client: one SPA that runs as a mobile web app and as a Telegram Mini App.
+The browser client: one SPA that runs as a mobile web app. Telegram Mini App support is
+**postponed until after launch**; the client has no Telegram code for now.
 It renders server state and sends intents. It never decides outcomes (CLAUDE.md rule 1).
 
 ## Decided
@@ -13,23 +14,11 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
   - Preact components re-render when a signal they read changes.
   - Phaser scenes subscribe with `effect()` and dispose it on scene `SHUTDOWN`.
   - Scenes and components never import each other.
-- **The platform adapter** is `src/platform/telegram.ts`. Telegram's official
-  `telegram-web-app.js` is loaded in `index.html` and wrapped in a typed `Platform`. Inside
-  Telegram it:
-  - calls `ready()` and `expand()`;
-  - sets the header and background colours;
-  - calls `disableVerticalSwipes()`, so dragging the chart doesn't close the app;
-  - exposes the native back button and the raw `initData`. Telegram sign-in is **dropped
-    for now** (CLAUDE.md rule 11), so `initData` is unused. The adapter stays for the
-    theme, viewport and back button.
-
-  In a normal browser everything is a no-op. Telegram also sets the `--tg-*` CSS variables
-  (theme, safe-area insets) that `styles.css` uses.
 - **i18n:**
   - **Keys:** flat keys in `/locales/{en,ua}.json`.
   - **Functions:** `t(key)` takes a compile-time-checked key. `tKey(key)` takes runtime keys,
     such as content `name_key` values from the server.
-  - **Locale:** taken from Telegram's `language_code`, then `navigator.languages`. `uk` maps
+  - **Locale:** taken from `navigator.languages`. `uk` maps
     to `ua`; English is the fallback.
   - **Tests:** a vitest test checks that both files have the same keys. A pytest test checks
     that every content `name_key` exists in both.
@@ -74,12 +63,11 @@ It renders server state and sends intents. It never decides outcomes (CLAUDE.md 
 ## Layout
 ```
 client/
-  index.html          #game (Phaser canvas) + #ui (Preact overlay), Telegram script
+  index.html          #game (Phaser canvas) + #ui (Preact overlay)
   vite.config.ts      Preact plugin, /api + /ws proxy, @locales alias, vitest config
   scripts/gen-protocol.mjs
   src/
-    main.tsx          platform → i18n → overlay → Phaser → load data
-    platform/         Telegram adapter
+    main.tsx          i18n → overlay → Phaser → load data
     net/              http.ts (request wrapper), api.ts (endpoints), ws.ts (WsClient)
     state/            signals: auth, screen, galaxy, combatStore (logic), combat (wiring)
     combat/           pure combat UI logic: interaction.ts (tap → intent, highlights),
@@ -112,7 +100,7 @@ Phaser and the DOM. It is unit-tested with vitest in `*.test.ts` files next to t
   - a tap within 22 px of a star (a 44 px target) selects it, and a tap on empty space
     clears the selection.
 - **Star sheet:** the selected star opens a bottom sheet (name, code, spectral type,
-  cluster, lane and bridge counts). Telegram's back button closes it.
+  cluster, lane and bridge counts).
 
 ## WebSocket client (`src/net/ws.ts`)
 - **One connection per tab.** It opens when the combat screen needs it and closes when the
@@ -195,18 +183,11 @@ npm run dev            # http://localhost:5173, also on your LAN IP for a real p
   with an MSYS working directory (`/d/...`) makes vitest load two copies of itself, and
   every suite fails with "Cannot read properties of undefined (reading 'config')".
 
-### Testing inside Telegram (later)
-Telegram needs a public HTTPS URL:
-1. Run `cloudflared tunnel --url http://localhost:5173` (a quick tunnel; no account
-   needed). Add the tunnel host to `server.allowedHosts` in `vite.config.ts`.
-2. In @BotFather, use `/newapp` (or the bot's *Configure Mini App*) and set the tunnel URL.
-3. Open the Mini App from the bot. For debugging, use Telegram Desktop or Web with the
-   devtools enabled (Telegram's "Debug Mini Apps" setting).
-
 ## Open questions
-- **The Telegram script is synchronous** in `index.html`, so a slow or blocked
-  telegram.org delays the whole page. Loading it `async` needs `initPlatform()` to wait
-  for it, or to run again when it arrives.
+- **Telegram Mini App (after launch).** Bring back a platform adapter around
+  `telegram-web-app.js` (`ready`/`expand`, header colours, `disableVerticalSwipes`, the
+  native back button, `--tg-*` safe-area insets, `language_code` for the locale). Load the
+  script `async` so a slow telegram.org can't block the page.
 - **Combat animations:** tweens for moves and hits, driven by the events. The view already
   holds the end state.
 - **Bundle size:** about 1.4 MB minified (370 KB gzip), mostly Phaser. Should Phaser be
